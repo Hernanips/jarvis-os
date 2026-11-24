@@ -26,7 +26,7 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
     'crear_lista', 'editar_lista', 'borrar_lista', 'limpiar_completadas',
     'crear_calendario', 'editar_calendario', 'borrar_calendario',
     'crear_evento', 'editar_evento', 'borrar_evento', 'consultar_calendario',
-    'crear_tarea', 'editar_tarea', 'borrar_tarea'
+    'crear_tarea', 'crear_tareas_lote', 'editar_tarea', 'reorganizar_tareas_lote', 'borrar_tarea'
   ];
 
   if (accionesDirectas.includes(nombre)) {
@@ -163,15 +163,14 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
     return error ? { error: error.message } : { historial_peso: data || [] };
   }
 
-  // 8. CONSULTAR ESTADO DEL DÍA (Supabase + Google Calendar/Tasks + Strava)
+  // 8. CONSULTAR ESTADO DEL DÍA (Rápido: solo Supabase + Google Calendar/Tasks)
   if (nombre === 'consultar_estado_dia') {
     const { inicioDia, finDia } = obtenerRangoDiaMadrid();
 
-    const [comidas, peso, dataG, dataStrava] = await Promise.all([
+    const [comidas, peso, dataG] = await Promise.all([
       supabase.from('meals').select('*').eq('user_id', userId).gte('created_at', inicioDia).lte('created_at', finDia),
       supabase.from('weight_logs').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(1),
-      ejecutarAccionGoogle('leer_tareas', {}, googleToken, userId, googleRefreshToken),
-      consultarEntrenosStrava(userId, { limit: 5, include_latest_details: true })
+      ejecutarAccionGoogle('leer_tareas', {}, googleToken, userId, googleRefreshToken)
     ]);
 
     const totalCalorias = comidas.data?.reduce((acc, c) => acc + (Number(c.calories) || 0), 0) || 0;
@@ -184,7 +183,6 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
         comidas_registradas: comidas.data || []
       },
       ultimo_peso: peso.data?.[0]?.weight_kg || 'No registrado',
-      strava: dataStrava,
       google_conectado: dataG?.ok === true,
       error_google: dataG?.ok === false ? dataG.error : null,
       tareas_por_lista: dataG?.tareas || {},

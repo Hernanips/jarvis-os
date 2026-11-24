@@ -182,6 +182,30 @@ export const assistantTools = [
         }
       },
       {
+        name: 'crear_tareas_lote',
+        description: 'Crea MÚLTIPLES tareas a la vez en Google Tasks en una sola llamada paralela. Úsala SIEMPRE que el usuario pida desglosar un proyecto, trabajo, entrega o rutina en varias tareas repartidas en distintos días.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            tareas: {
+              type: Type.ARRAY,
+              description: 'Lista completa de tareas a crear',
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING, description: 'Título claro de la tarea' },
+                  category: { type: Type.STRING, description: 'Nombre exacto de la lista de destino del usuario' },
+                  due_date: { type: Type.STRING, description: 'Fecha en formato YYYY-MM-DD' },
+                  description: { type: Type.STRING, description: 'Detalles o notas opcionales' }
+                },
+                required: ['title', 'category', 'due_date']
+              }
+            }
+          },
+          required: ['tareas']
+        }
+      },
+      {
         name: 'borrar_tarea',
         description: 'Elimina por completo una tarea individual de Google Tasks.',
         parameters: {

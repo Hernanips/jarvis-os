@@ -328,7 +328,7 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
       const rrule = construirRRULE(args.recurrence_type, args.recurrence_interval, args.days_of_week);
       if (rrule) payload.recurrence = rrule;
 
-      if (args.reminders) {
+      if (args.reminders && String(args.reminders).toLowerCase() !== 'none') {
         const mins = String(args.reminders)
           .split(',')
           .map(m => Number(m.trim()))
@@ -339,6 +339,15 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
             overrides: mins.map(m => ({ method: 'popup', minutes: m }))
           };
         }
+      } else if (String(args.reminders).toLowerCase() !== 'none') {
+        // Recordatorios automáticos por defecto: 1 hora antes y 24 horas antes
+        payload.reminders = {
+          useDefault: false,
+          overrides: [
+            { method: 'popup', minutes: 60 },
+            { method: 'popup', minutes: 1440 }
+          ]
+        };
       }
 
       await gFetch(`${CAL_BASE}/calendars/${encodeURIComponent(calDestino.id)}/events`, {
@@ -559,6 +568,107 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
       });
 
       return { ok: true, _newGoogleAccessToken: tokenRenovadoEnEstaLlamada, mensaje: `Tarea "${nuevoTitulo}" actualizada en "${listaNombre}"` };
+    }
+
+    if (accion === 'crear_tareas_lote') {
+      const listaNuevas = Array.isArray(args.tareas) ? args.tareas : [];
+
+      const resultados = await Promise.all(
+        listaNuevas.map(async (item) => {
+          try {
+            const listaDestino = buscarListaPorNombre(item.category) || todasLasListas[0];
+            const body = {
+              title: item.title || 'Nueva tarea',
+              notes: item.description || ''
+            };
+            if (item.due_date && /^\d{4}-\d{2}-\d{2}/.test(item.due_date)) {
+              body.due = `${item.due_date.substring(0, 10)}T09:00:00.000Z`;
+            }
+
+            const creada = await gFetch(
+              `${TASKS_BASE}/lists/${encodeURIComponent(listaDestino.id)}/tasks`,
+              { method: 'POST', body: JSON.stringify(body) }
+            );
+
+            return {
+              ok: true,
+              tarea: creada.title,
+              lista: listaDestino.title,
+              fecha: item.due_date ? item.due_date.substring(0, 10) : null
+            };
+          } catch (e) {
+            return { ok: false, tarea: item.title, error: e.message };
+          }
+        })
+      );
+
+      return {
+        ok: true,
+        _newGoogleAccessToken: tokenRenovadoEnEstaLlamada,
+        tareas_creadas: resultados
+      };
+    }
+
+    if (accion === 'reorganizar_tareas_lote') {
+      const listaCambios = Array.isArray(args.cambios) ? args.cambios : [];
+
+      // 1. Descargamos todas las tareas de todas las listas UNA sola vez en paralelo
+      const cargasListas = await Promise.all(
+        todasLasListas.map(async (lista) => {
+          const resT = await gFetch(
+            `${TASKS_BASE}/lists/${encodeURIComponent(lista.id)}/tasks?showCompleted=false&maxResults=100`
+          );
+          return (resT.items || []).map(t => ({
+            tarea: t,
+            listaId: lista.id,
+            listaNombre: lista.title,
+            norm: normalizar(t.title)
+          }));
+        })
+      );
+      const catalogo = cargasListas.flat();
+
+      // 2. Aplicamos todos los cambios de fecha en paralelo
+      const resultados = await Promise.all(
+        listaCambios.map(async (item) => {
+          try {
+            const q = normalizar(item.search_title);
+            const match = catalogo.find(c => c.norm.includes(q) || q.includes(c.norm));
+            if (!match) {
+              return { tarea: item.search_title, ok: false, error: 'No encontrada' };
+            }
+
+            const nuevaFecha = `${item.due_date.substring(0, 10)}T09:00:00.000Z`;
+            await gFetch(
+              `${TASKS_BASE}/lists/${encodeURIComponent(match.listaId)}/tasks/${encodeURIComponent(match.tarea.id)}`,
+              {
+                method: 'PATCH',
+                body: JSON.stringify({
+                  title: match.tarea.title,
+                  notes: match.tarea.notes || '',
+                  status: match.tarea.status || 'needsAction',
+                  due: nuevaFecha
+                })
+              }
+            );
+
+            return {
+              ok: true,
+              tarea: match.tarea.title,
+              lista: match.listaNombre,
+              nueva_fecha: item.due_date.substring(0, 10)
+            };
+          } catch (e) {
+            return { tarea: item.search_title, ok: false, error: e.message };
+          }
+        })
+      );
+
+      return {
+        ok: true,
+        _newGoogleAccessToken: tokenRenovadoEnEstaLlamada,
+        tareas_reorganizadas: resultados
+      };
     }
 
     if (accion === 'borrar_tarea') {

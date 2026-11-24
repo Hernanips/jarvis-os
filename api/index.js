@@ -5,7 +5,6 @@ import { intercambiarCodigoStrava } from '../src/services/stravaApi.js';
 
 const MODELO_GEMINI = 'gemini-3.5-flash-lite';
 
-// Reintento automático ante picos de demanda (503 / 429 / overloaded)
 async function llamarGeminiConReintento(params, maxIntentos = 3) {
   let ultimoError = null;
   for (let intento = 1; intento <= maxIntentos; intento++) {
@@ -22,6 +21,71 @@ async function llamarGeminiConReintento(params, maxIntentos = 3) {
     }
   }
   throw ultimoError;
+}
+
+// Construye recibos verificados únicamente cuando la herramienta devolvió éxito real
+function extraerRecibos(nombre, args, res) {
+  if (!res || res.ok === false || res.error) return [];
+
+  if (nombre === 'crear_evento') {
+    return [{ type: 'CALENDAR', label: `${args.title} · ${args.start_time}` }];
+  }
+  if (nombre === 'editar_evento') {
+    return [{ type: 'CALENDAR', label: `Editado: ${args.new_title || args.search_title}` }];
+  }
+  if (nombre === 'borrar_evento') {
+    return [{ type: 'CALENDAR', label: `Borrado: ${args.title}` }];
+  }
+  if (nombre === 'crear_tarea') {
+    const f = args.due_date ? ` · ${args.due_date}` : '';
+    return [{ type: 'TASKS', label: `${args.title}${f}` }];
+  }
+  if (nombre === 'crear_tareas_lote' && Array.isArray(res.tareas_creadas)) {
+    return res.tareas_creadas
+      .filter(t => t.ok)
+      .map(t => ({ type: 'TASKS', label: `${t.tarea}${t.fecha ? ' · ' + t.fecha : ''}` }));
+  }
+  if (nombre === 'editar_tarea') {
+    const extra = args.completed ? ' (Hecha)' : (args.due_date ? ` → ${args.due_date}` : '');
+    return [{ type: 'TASKS', label: `${args.new_title || args.search_title}${extra}` }];
+  }
+  if (nombre === 'reorganizar_tareas_lote' && Array.isArray(res.tareas_reorganizadas)) {
+    return res.tareas_reorganizadas
+      .filter(t => t.ok)
+      .map(t => ({ type: 'TASKS', label: `${t.tarea} → ${t.nueva_fecha}` }));
+  }
+  if (nombre === 'borrar_tarea') {
+    return [{ type: 'TASKS', label: `Borrada: ${args.title}` }];
+  }
+  if (nombre === 'actualizar_bloque_memoria') {
+    return [{ type: 'MEMORIA', label: args.topic || 'Actualizada' }];
+  }
+  if (nombre === 'registrar_comida') {
+    return [{ type: 'NUTRICIÓN', label: `${args.description} (${args.calories} kcal)` }];
+  }
+  if (nombre === 'registrar_peso') {
+    return [{ type: 'PESO', label: `${args.weight_kg} kg` }];
+  }
+  return [];
+}
+
+// Asegura alternancia estricta user -> model exigida por Gemini
+function sanitizarHistorial(mensajes) {
+  const limpio = [];
+  for (const m of mensajes) {
+    if (!m.content || !m.content.trim()) continue;
+    if (limpio.length === 0 && m.role !== 'user') continue;
+    if (limpio.length > 0 && limpio[limpio.length - 1].role === m.role) {
+      limpio[limpio.length - 1].parts[0].text += `\n${m.content}`;
+    } else {
+      limpio.push({ role: m.role, parts: [{ text: m.content }] });
+    }
+  }
+  // Si el último guardado era 'user' (por un corte previo), lo descartamos para evitar doble 'user'
+  if (limpio.length > 0 && limpio[limpio.length - 1].role === 'user') {
+    limpio.pop();
+  }
+  return limpio;
 }
 
 export default async function handler(req, res) {
@@ -129,19 +193,33 @@ export default async function handler(req, res) {
         });
       }
 
-      // 4. Cargamos los Bloques de Memoria Viva del usuario (Estilo Claude)
-      const { data: memoriasUsuario } = await supabase
-        .from('user_memories')
-        .select('category, fact, updated_at')
-        .eq('user_id', userId)
-        .order('updated_at', { ascending: false })
-        .limit(20);
+      // 4. Cargamos en PARALELO la Memoria Viva y el contexto reciente invisible (últimas 14 horas)
+      const hace14Horas = new Date(Date.now() - 14 * 3600 * 1000).toISOString();
 
-      const bloqueMemoriaTexto = (memoriasUsuario && memoriasUsuario.length > 0)
+      const [memRes, ctxRes] = await Promise.all([
+        supabase
+          .from('user_memories')
+          .select('category, fact, updated_at')
+          .eq('user_id', userId)
+          .order('updated_at', { ascending: false })
+          .limit(20),
+        supabase
+          .from('chat_messages')
+          .select('role, content')
+          .eq('user_id', userId)
+          .gte('created_at', hace14Horas)
+          .order('created_at', { ascending: false })
+          .limit(16)
+      ]);
+
+      const memoriasUsuario = memRes.data || [];
+      const historialRecienteBD = sanitizarHistorial((ctxRes.data || []).reverse());
+
+      const bloqueMemoriaTexto = memoriasUsuario.length > 0
         ? memoriasUsuario.map(m => `### [${m.category}]\n${m.fact}`).join('\n\n')
         : 'Todavía no hay bloques de memoria guardados para este usuario.';
 
-      const { message, history = [] } = body;
+      const { message } = body;
 
       const ahora = new Date();
       const fechaLegible = ahora.toLocaleDateString('es-ES', {
@@ -166,33 +244,32 @@ export default async function handler(req, res) {
         ============================================
 
         PERSONALIDAD Y TONO (DEFAULT):
-        - Comunícate de forma natural, clara, cercana y resolutiva, como un asistente de IA moderno por defecto.
-        - Nunca uses un tono autoritario, militar ni sermones motivacionales.
-        - Adapta la extensión a cada petición: breve y directo en acciones cotidianas; detallado, estructurado y analítico cuando el usuario pida planificar proyectos, resolver dudas complejas o analizar datos.
-        - Puedes responder cualquier pregunta general (igual que un chat de IA normal), además de gestionar el ecosistema personal del usuario.
+        - Comunícate de forma natural, clara, cercana y resolutiva. Cero tono autoritario o sermones.
+        - Breve y directo en acciones rápidas; detallado y bien estructurado en planificaciones o análisis.
 
-        MEMORIA VIVA POR BLOQUES (ESTILO CLAUDE):
-        - Utiliza la memoria de arriba con naturalidad sin mencionar "mi base de datos".
-        - Cuando el usuario aporte datos duraderos sobre su vida (trabajo, estudios, hogar, objetivos, salud, proyectos, preferencias o resultados importantes), llama de forma proactiva a 'actualizar_bloque_memoria' creando o actualizando el tema correspondiente con el RESUMEN COMPLETO CONSOLIDADO.
-        - Al actualizar un bloque, conserva lo vigente, integra lo nuevo con fechas absolutas y ELIMINA planes o eventos que ya hayan pasado (hoy es ${fechaLegible}).
+        REGLAS DETERMINISTAS DE EJECUCIÓN (COHESIÓN TOTAL):
+        1. EVENTO O HITO CON FECHA CONCRETA (ej: "me he apuntado a una carrera el 25 de octubre", "tengo examen el martes", "cita médica el jueves"):
+           -> Guárdalo en Google Calendar con 'crear_evento' (se añaden recordatorios automáticos de 24h y 1h) Y actualiza su bloque en memoria con 'actualizar_bloque_memoria' si es relevante a medio/largo plazo. No hace falta que el usuario pida explícitamente "añádelo al calendario".
+        2. TRABAJO ACCIONABLE, ENTREGAS O REORGANIZACIÓN (ej: "me quedan 40 páginas para el 16 de diciembre, organízame", "reorganiza lo pendiente", "esto no me ha dado tiempo hoy"):
+           -> Llama primero a 'consultar_estado_dia' para ver listas, tareas actuales y huecos reales del calendario.
+           -> Decide el reparto óptimo y ejecuta los cambios REALES en Google Tasks usando 'crear_tareas_lote' o 'reorganizar_tareas_lote' SIN pedir confirmación previa.
+           -> Si es un proyecto o entrega grande, actualiza también el bloque de memoria correspondiente para no perder el hilo en días posteriores.
+        3. DATO PERSONAL SIN FECHA (ej: "me he comprado unas zapatillas nuevas", "me duele la rodilla", preferencias):
+           -> Solo actualiza la memoria viva con 'actualizar_bloque_memoria'. NO crees tareas ni eventos innecesarios.
+        4. CONTINUIDAD: Tienes el historial de las últimas horas arriba. Si el usuario vuelve más tarde diciendo "he acabado esto, lo otro no me dio tiempo", retoma el plan inmediatamente y mueve las tareas pendientes en Google Tasks.
 
-        PLANIFICACIÓN UNIVERSAL Y EJECUCIÓN EN GOOGLE TASKS / CALENDAR:
-        - AUTONOMÍA REAL: Cuando el usuario pida organizar un objetivo o entrega con fecha límite (laboral, académico, doméstico o personal) o reorganizar tareas pendientes entre varios días:
-          1. Llama primero a 'consultar_estado_dia' (si aún no lo has hecho en este turno) para conocer sus listas exactas de Tasks, sus calendarios y sus huecos disponibles.
-          2. Calcula el reparto de carga de forma realista teniendo en cuenta sus eventos y fechas límite.
-          3. Aplica directamente los cambios en Google Tasks y/o Calendar usando 'reorganizar_tareas_lote', 'crear_tarea', 'editar_tarea' o 'crear_evento' SIN pedir confirmación previa.
-          4. Al finalizar, muestra un resumen limpio y exacto de lo que has creado o modificado (título, lista/calendario y fecha) para que el usuario pueda confiar al 100% en el resultado.
-        - Si 'consultar_estado_dia' devuelve 'google_conectado: false', informa al usuario con el mensaje exacto de 'error_google'.
-        - No crees tareas ni eventos por tu cuenta si el usuario solo está conversando sin pedirte agendar ni organizar nada.
-        - Si el usuario incluye detalles o notas para una tarea/evento, pásalos siempre en el parámetro 'description'.
+        MEMORIA VIVA POR BLOQUES:
+        - Al llamar a 'actualizar_bloque_memoria', pasa el RESUMEN COMPLETO CONSOLIDADO del tema, integrando lo nuevo y eliminando planes pasados que ya caducaron (hoy es ${fechaLegible}).
 
-        MÓDULOS OPCIONALES (DEPORTE Y NUTRICIÓN):
-        - STRAVA: Solo consulta 'consultar_entrenos_strava' cuando el usuario pregunte por entrenamientos, actividad física, carreras, ciclismo, gimnasio o rendimiento. Si no tiene Strava conectado y no pregunta por ello, no lo menciones.
-        - NUTRICIÓN Y PESO: Si el usuario registra comidas o peso, usa las herramientas de nutrición ('registrar_comida', 'editar_comida', 'borrar_comida', 'registrar_peso', 'consultar_peso').
+        OTRAS REGLAS:
+        - Si 'consultar_estado_dia' devuelve 'google_conectado: false', muestra exactamente 'error_google'.
+        - Si el usuario incluye detalles/notas para una tarea o evento, pásalos siempre en 'description'.
+        - STRAVA: Llama a 'consultar_entrenos_strava' solo cuando pregunte por entrenos, carreras, bici, gimnasio, pulsaciones o rendimiento.
+        - NUTRICIÓN/PESO: Usa las herramientas de comidas y peso cuando el usuario los mencione.
       `;
 
       let contents = [
-        ...history,
+        ...historialRecienteBD,
         { role: 'user', parts: [{ text: message }] }
       ];
 
@@ -203,56 +280,61 @@ export default async function handler(req, res) {
       });
 
       let refreshedGoogleToken = null;
-      let memorySavedCount = 0;
+      const actionsExecuted = [];
 
-      while (response.functionCalls && response.functionCalls.length > 0) {
-        contents.push(response.candidates[0].content);
+      async function procesarBucleHerramientas() {
+        while (response.functionCalls && response.functionCalls.length > 0) {
+          contents.push(response.candidates[0].content);
 
-        const functionResponseParts = [];
-        for (const call of response.functionCalls) {
-          if (call.name === 'actualizar_bloque_memoria') {
-            memorySavedCount++;
-          }
+          // Ejecutamos las herramientas de este turno en paralelo para máxima velocidad
+          const resultados = await Promise.all(
+            response.functionCalls.map(async (call) => {
+              const resultadoBD = await ejecutarHerramienta(
+                call.name,
+                call.args,
+                userId,
+                refreshedGoogleToken || googleToken,
+                googleRefreshToken
+              );
 
-          const resultadoBD = await ejecutarHerramienta(
-            call.name,
-            call.args,
-            userId,
-            refreshedGoogleToken || googleToken,
-            googleRefreshToken
+              if (resultadoBD && resultadoBD._newGoogleAccessToken) {
+                refreshedGoogleToken = resultadoBD._newGoogleAccessToken;
+              }
+
+              actionsExecuted.push(...extraerRecibos(call.name, call.args, resultadoBD));
+
+              return {
+                functionResponse: {
+                  name: call.name,
+                  response: { result: resultadoBD }
+                }
+              };
+            })
           );
 
-          if (resultadoBD && resultadoBD._newGoogleAccessToken) {
-            refreshedGoogleToken = resultadoBD._newGoogleAccessToken;
-          }
+          contents.push({ role: 'user', parts: resultados });
 
-          functionResponseParts.push({
-            functionResponse: {
-              name: call.name,
-              response: { result: resultadoBD }
-            }
+          response = await llamarGeminiConReintento({
+            model: MODELO_GEMINI,
+            contents,
+            config: { systemInstruction, tools: assistantTools }
           });
         }
-
-        contents.push({ role: 'user', parts: functionResponseParts });
-
-        response = await llamarGeminiConReintento({
-          model: MODELO_GEMINI,
-          contents,
-          config: { systemInstruction, tools: assistantTools }
-        });
       }
 
-      // Seguro anti-preguntas: si pidió reorganizar/repartir/planificar y terminó pidiendo permiso sin ejecutar
-      const pidioReorganizar = /reorgani|repart|distribuy|muev|pospon|cambi.*fecha|organ[ií]zame/i.test(message);
-      const terminoPreguntando = /\?|quieres que|prefieres|especifica|dime qué|cómo quieres/i.test(response.text || '');
+      await procesarBucleHerramientas();
 
-      if (pidioReorganizar && terminoPreguntando) {
+      // Seguro anti-preguntas si pidió reorganizar/planificar pero no ejecutó ninguna acción en Tasks/Calendar
+      const pidioOrganizar = /reorgani|repart|distribuy|muev|pospon|cambi.*fecha|organ[ií]zame|no me ha dado tiempo/i.test(message);
+      const terminoPreguntando = /\?|quieres que|prefieres|especifica|dime qué|cómo quieres/i.test(response.text || '');
+      const ejecutoEnGoogle = actionsExecuted.some(a => a.type === 'TASKS' || a.type === 'CALENDAR');
+
+      if (pidioOrganizar && terminoPreguntando && !ejecutoEnGoogle) {
         contents.push(response.candidates[0].content);
         contents.push({
           role: 'user',
           parts: [{
-            text: 'SISTEMA INTERNO: No pidas confirmación ni preguntes cómo distribuirlo. Decide tú mismo el reparto más equilibrado según el calendario del usuario y llama inmediatamente a reorganizar_tareas_lote, crear_tarea o editar_tarea para aplicar los cambios reales.'
+            text: 'SISTEMA INTERNO: No pidas confirmación. Decide tú mismo el reparto más lógico según el calendario y llama inmediatamente a reorganizar_tareas_lote, crear_tareas_lote o crear_evento para aplicar los cambios reales ahora.'
           }]
         });
 
@@ -262,37 +344,24 @@ export default async function handler(req, res) {
           config: { systemInstruction, tools: assistantTools }
         });
 
-        while (response.functionCalls && response.functionCalls.length > 0) {
-          contents.push(response.candidates[0].content);
-          const functionResponseParts = [];
-          for (const call of response.functionCalls) {
-            const resultadoBD = await ejecutarHerramienta(
-              call.name,
-              call.args,
-              userId,
-              refreshedGoogleToken || googleToken,
-              googleRefreshToken
-            );
-            if (resultadoBD && resultadoBD._newGoogleAccessToken) {
-              refreshedGoogleToken = resultadoBD._newGoogleAccessToken;
-            }
-            functionResponseParts.push({
-              functionResponse: { name: call.name, response: { result: resultadoBD } }
-            });
-          }
-          contents.push({ role: 'user', parts: functionResponseParts });
-          response = await llamarGeminiConReintento({
-            model: MODELO_GEMINI,
-            contents,
-            config: { systemInstruction, tools: assistantTools }
-          });
-        }
+        await procesarBucleHerramientas();
       }
 
+      const replyText = response.text || 'Hecho.';
+
+      // Guardamos el turno en chat_messages para mantener la continuidad invisible entre sesiones y dispositivos
+      await supabase
+        .from('chat_messages')
+        .insert([
+          { user_id: userId, role: 'user', content: message },
+          { user_id: userId, role: 'model', content: replyText }
+        ]);
+
       return res.status(200).json({
-        reply: response.text,
+        reply: replyText,
         newGoogleToken: refreshedGoogleToken || null,
-        memoryUpdated: memorySavedCount > 0
+        actions: actionsExecuted,
+        memoryUpdated: actionsExecuted.some(a => a.type === 'MEMORIA')
       });
     } catch (error) {
       console.error("❌ Error crítico en el servidor:", error);
