@@ -58,8 +58,13 @@ function extraerRecibos(nombre, args, res) {
       .filter(t => t.ok)
       .map(t => ({ type: 'TASKS', label: `${t.tarea} → ${t.nueva_fecha}` }));
   }
-  if (nombre === 'borrar_tarea') {
-    return [{ type: 'TASKS', label: `Borrada: ${args.title}` }];
+  if ((nombre === 'borrar_tarea' || nombre === 'borrar_tareas_lote') && Array.isArray(res.tareas_borradas)) {
+    return res.tareas_borradas
+      .filter(t => t.ok)
+      .map(t => ({
+        type: 'TASKS',
+        label: `Borrada: [${t.lista}] ${t.tarea}${t.fecha ? ' · ' + t.fecha : ''}`
+    }));
   }
   if (nombre === 'actualizar_bloque_memoria') {
     return [{ type: 'MEMORIA', label: args.topic || 'Actualizada' }];
@@ -291,31 +296,29 @@ export default async function handler(req, res) {
         while (response.functionCalls && response.functionCalls.length > 0) {
           contents.push(response.candidates[0].content);
 
-          // Ejecutamos las herramientas de este turno en paralelo para máxima velocidad
-          const resultados = await Promise.all(
-            response.functionCalls.map(async (call) => {
-              const resultadoBD = await ejecutarHerramienta(
-                call.name,
-                call.args,
-                userId,
-                refreshedGoogleToken || googleToken,
-                googleRefreshToken
-              );
+          const resultados = [];
+          for (const call of response.functionCalls) {
+            const resultadoBD = await ejecutarHerramienta(
+              call.name,
+              call.args,
+              userId,
+              refreshedGoogleToken || googleToken,
+              googleRefreshToken
+            );
 
-              if (resultadoBD && resultadoBD._newGoogleAccessToken) {
-                refreshedGoogleToken = resultadoBD._newGoogleAccessToken;
+            if (resultadoBD && resultadoBD._newGoogleAccessToken) {
+              refreshedGoogleToken = resultadoBD._newGoogleAccessToken;
+            }
+
+            actionsExecuted.push(...extraerRecibos(call.name, call.args, resultadoBD));
+
+            resultados.push({
+              functionResponse: {
+                name: call.name,
+                response: { result: resultadoBD }
               }
-
-              actionsExecuted.push(...extraerRecibos(call.name, call.args, resultadoBD));
-
-              return {
-                functionResponse: {
-                  name: call.name,
-                  response: { result: resultadoBD }
-                }
-              };
-            })
-          );
+            });
+          }
 
           contents.push({ role: 'user', parts: resultados });
 

@@ -766,14 +766,107 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
       };
     }
 
-    if (accion === 'borrar_tarea') {
-      const encontrada = await buscarTareaPorNombre(args.title);
-      if (!encontrada) return { ok: false, error: 'Tarea no encontrada' };
-      await gFetch(
-        `${TASKS_BASE}/lists/${encodeURIComponent(encontrada.listaId)}/tasks/${encodeURIComponent(encontrada.tarea.id)}`,
-        { method: 'DELETE' }
+    if (accion === 'borrar_tarea' || accion === 'borrar_tareas_lote') {
+      const cargasListas = await Promise.all(
+        todasLasListas.map(async (lista) => {
+          const resT = await gFetch(
+            `${TASKS_BASE}/lists/${encodeURIComponent(lista.id)}/tasks?showCompleted=false&maxResults=100`
+          );
+          return (resT.items || []).map(t => ({
+            tarea: t,
+            listaId: lista.id,
+            listaNombre: lista.title,
+            norm: normalizar(t.title),
+            fecha: t.due ? t.due.substring(0, 10) : null
+          }));
+        })
       );
-      return { ok: true, _newGoogleAccessToken: tokenRenovadoEnEstaLlamada, mensaje: 'Tarea eliminada' };
+      const catalogo = cargasListas.flat();
+
+      const elegirCoincidenciaUnica = (tituloBuscado, fechaBuscada, usados) => {
+        const q = normalizar(tituloBuscado);
+        if (!q) return null;
+        const f = fechaBuscada ? String(fechaBuscada).substring(0, 10) : null;
+        const disponibles = catalogo.filter(c => !usados.has(c.tarea.id));
+
+        // 1. Título exacto + fecha exacta
+        if (f) {
+          const exactoFecha = disponibles.find(c => c.norm === q && c.fecha === f);
+          if (exactoFecha) return exactoFecha;
+          const parcialFecha = disponibles.find(c => (c.norm.includes(q) || q.includes(c.norm)) && c.fecha === f);
+          if (parcialFecha) return parcialFecha;
+        }
+        // 2. Título exacto sin fecha
+        const exacto = disponibles.find(c => c.norm === q);
+        if (exacto) return exacto;
+        // 3. Coincidencia parcial
+        return disponibles.find(c => c.norm.includes(q) || (c.norm.length >= 4 && q.includes(c.norm))) || null;
+      };
+
+      const objetivos = [];
+      const usados = new Set();
+
+      if (accion === 'borrar_tarea') {
+        const q = normalizar(args.title);
+        const f = args.due_date ? String(args.due_date).substring(0, 10) : null;
+
+        if (args.delete_all_matches) {
+          const coincidencias = catalogo.filter(c =>
+            c.norm.includes(q) && (!f || c.fecha === f)
+          );
+          for (const c of coincidencias) {
+            usados.add(c.tarea.id);
+            objetivos.push(c);
+          }
+        } else {
+          const match = elegirCoincidenciaUnica(args.title, args.due_date, usados);
+          if (match) {
+            usados.add(match.tarea.id);
+            objetivos.push(match);
+          }
+        }
+      } else {
+        const listaPedida = Array.isArray(args.tareas) ? args.tareas : [];
+        for (const item of listaPedida) {
+          const match = elegirCoincidenciaUnica(item?.title || item?.titulo, item?.due_date || item?.fecha, usados);
+          if (match) {
+            usados.add(match.tarea.id);
+            objetivos.push(match);
+          }
+        }
+      }
+
+      if (objetivos.length === 0) {
+        return {
+          ok: false,
+          error: `No se encontró ninguna tarea pendiente que coincida para borrar.`
+        };
+      }
+
+      const resultados = await Promise.all(
+        objetivos.map(async (obj) => {
+          try {
+            await gFetch(
+              `${TASKS_BASE}/lists/${encodeURIComponent(obj.listaId)}/tasks/${encodeURIComponent(obj.tarea.id)}`,
+              { method: 'DELETE' }
+            );
+            return {
+              ok: true,
+              tarea: obj.tarea.title,
+              lista: obj.listaNombre,
+              fecha: obj.fecha
+            };
+          } catch (e) {
+            return { ok: false, tarea: obj.tarea.title, error: e.message };
+          }
+        })
+      );
+
+      return {
+        ok: true,
+        _newGoogleAccessToken: tokenRenovadoEnEstaLlamada,
+        tareas_borradas: resultados
+      };
     }
 
     if (accion === 'leer_tareas') {

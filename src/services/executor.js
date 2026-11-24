@@ -26,7 +26,8 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
     'crear_lista', 'editar_lista', 'borrar_lista', 'limpiar_completadas',
     'crear_calendario', 'editar_calendario', 'borrar_calendario',
     'crear_evento', 'editar_evento', 'borrar_evento', 'consultar_calendario',
-    'crear_tarea', 'crear_tareas_lote', 'editar_tarea', 'reorganizar_tareas_lote', 'borrar_tarea'
+    'crear_tarea', 'crear_tareas_lote', 'editar_tarea', 'reorganizar_tareas_lote',
+    'borrar_tarea', 'borrar_tareas_lote'
   ];
 
   if (accionesDirectas.includes(nombre)) {

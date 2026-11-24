@@ -207,13 +207,37 @@ export const assistantTools = [
       },
       {
         name: 'borrar_tarea',
-        description: 'Elimina por completo una tarea individual de Google Tasks.',
+        description: 'Elimina una o varias tareas de Google Tasks. Si el usuario pide borrar TODAS las tareas que coincidan con un tema o título repetido (ej: "borra todas las tareas del sketchbook"), pon delete_all_matches: true.',
         parameters: {
           type: Type.OBJECT,
           properties: {
-            title: { type: Type.STRING, description: 'Nombre de la tarea a borrar' }
+            title: { type: Type.STRING, description: 'Título o texto clave de la tarea a borrar' },
+            due_date: { type: Type.STRING, description: 'Opcional: fecha concreta YYYY-MM-DD si hay varias tareas con el mismo título y solo quieres borrar la de un día' },
+            delete_all_matches: { type: Type.BOOLEAN, description: 'Pon true para borrar TODAS las tareas pendientes que contengan ese texto/título' }
           },
           required: ['title']
+        }
+      },
+      {
+        name: 'borrar_tareas_lote',
+        description: 'Borra MÚLTIPLES tareas concretas en una sola llamada de forma segura (incluso si tienen el mismo título en distintas fechas).',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            tareas: {
+              type: Type.ARRAY,
+              description: 'Lista de tareas a eliminar',
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING, description: 'Título de la tarea' },
+                  due_date: { type: Type.STRING, description: 'Fecha YYYY-MM-DD opcional para distinguir títulos repetidos' }
+                },
+                required: ['title']
+              }
+            }
+          },
+          required: ['tareas']
         }
       },
 
