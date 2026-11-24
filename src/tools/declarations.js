@@ -183,18 +183,18 @@ export const assistantTools = [
       },
       {
         name: 'crear_tareas_lote',
-        description: 'Crea MÚLTIPLES tareas a la vez en Google Tasks en una sola llamada paralela. Úsala SIEMPRE que el usuario pida desglosar un proyecto, trabajo, entrega o rutina en varias tareas repartidas en distintos días.',
+        description: 'Crea MÚLTIPLES tareas a la vez en Google Tasks en paralelo. Úsala siempre que haya que crear 2 o más tareas (por ejemplo, dividir un trabajo o páginas en varios días). Ejemplo exacto de parámetro: { "tareas": [ { "title": "Sketchbook: 7 páginas", "category": "UPV", "due_date": "2026-11-25" }, { "title": "Sketchbook: 7 páginas", "category": "UPV", "due_date": "2026-11-26" } ] }.',
         parameters: {
           type: Type.OBJECT,
           properties: {
             tareas: {
               type: Type.ARRAY,
-              description: 'Lista completa de tareas a crear',
+              description: 'Array de objetos. Cada objeto DEBE tener title (string), category (nombre exacto de la lista del usuario) y due_date (YYYY-MM-DD).',
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  title: { type: Type.STRING, description: 'Título claro de la tarea' },
-                  category: { type: Type.STRING, description: 'Nombre exacto de la lista de destino del usuario' },
+                  title: { type: Type.STRING, description: 'Título descriptivo de la tarea (obligatorio, nunca vacío)' },
+                  category: { type: Type.STRING, description: 'Nombre exacto de la lista de Google Tasks del usuario (ej: "UPV")' },
                   due_date: { type: Type.STRING, description: 'Fecha en formato YYYY-MM-DD' },
                   description: { type: Type.STRING, description: 'Detalles o notas opcionales' }
                 },

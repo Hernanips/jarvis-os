@@ -37,13 +37,17 @@ function extraerRecibos(nombre, args, res) {
     return [{ type: 'CALENDAR', label: `Borrado: ${args.title}` }];
   }
   if (nombre === 'crear_tarea') {
-    const f = args.due_date ? ` · ${args.due_date}` : '';
-    return [{ type: 'TASKS', label: `${args.title}${f}` }];
+    const lista = res.lista ? `[${res.lista}] ` : '';
+    const f = res.fecha ? ` · ${res.fecha}` : (args.due_date ? ` · ${args.due_date}` : '');
+    return [{ type: 'TASKS', label: `${lista}${res.tarea || args.title}${f}` }];
   }
   if (nombre === 'crear_tareas_lote' && Array.isArray(res.tareas_creadas)) {
     return res.tareas_creadas
       .filter(t => t.ok)
-      .map(t => ({ type: 'TASKS', label: `${t.tarea}${t.fecha ? ' · ' + t.fecha : ''}` }));
+      .map(t => ({
+        type: 'TASKS',
+        label: `[${t.lista}] ${t.tarea}${t.fecha ? ' · ' + t.fecha : ''}`
+      }));
   }
   if (nombre === 'editar_tarea') {
     const extra = args.completed ? ' (Hecha)' : (args.due_date ? ` → ${args.due_date}` : '');
@@ -257,7 +261,8 @@ export default async function handler(req, res) {
         3. DATO PERSONAL SIN FECHA (ej: "me he comprado unas zapatillas nuevas", "me duele la rodilla", preferencias):
            -> Solo actualiza la memoria viva con 'actualizar_bloque_memoria'. NO crees tareas ni eventos innecesarios.
         4. CONTINUIDAD: Tienes el historial de las últimas horas arriba. Si el usuario vuelve más tarde diciendo "he acabado esto, lo otro no me dio tiempo", retoma el plan inmediatamente y mueve las tareas pendientes en Google Tasks.
-
+        5. VERIFICACIÓN ESTRICTA: Nunca confirmes al usuario que has creado o movido tareas si la herramienta devolvió 'ok: false' o un número distinto de tareas al que planeas mencionar. Si una herramienta devuelve error de formato o lista no encontrada, corrige los argumentos y vuelve a llamarla antes de contestar.
+        
         MEMORIA VIVA POR BLOQUES:
         - Al llamar a 'actualizar_bloque_memoria', pasa el RESUMEN COMPLETO CONSOLIDADO del tema, integrando lo nuevo y eliminando planes pasados que ya caducaron (hoy es ${fechaLegible}).
 

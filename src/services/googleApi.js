@@ -143,7 +143,7 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
           return lista;
         }
       }
-      return todasLasListas[0];
+      return null;
     }
 
     async function buscarTareaPorNombre(nombreBuscado) {
@@ -480,6 +480,14 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
     }
 
     if (accion === 'crear_tarea') {
+      const tituloLimpio = (args.title || args.titulo || '').toString().trim();
+      if (!tituloLimpio) {
+        return {
+          ok: false,
+          error: 'Falta el campo obligatorio "title". No se ha creado la tarea; vuelve a llamar con "title", "category" y "due_date".'
+        };
+      }
+
       let listaDestino = todasLasListas[0];
       let parentId = null;
 
@@ -489,17 +497,24 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
           listaDestino = { id: padre.listaId, title: padre.listaNombre };
           parentId = padre.tarea.id;
         }
-      } else {
-        const encontrada = buscarListaPorNombre(args.category);
-        if (encontrada) listaDestino = encontrada;
+      } else if (args.category || args.lista) {
+        const encontrada = buscarListaPorNombre(args.category || args.lista);
+        if (!encontrada) {
+          return {
+            ok: false,
+            error: `No existe la lista "${args.category || args.lista}". Listas disponibles exactas: ${todasLasListas.map(l => l.title).join(', ')}. Vuelve a llamar con el nombre exacto.`
+          };
+        }
+        listaDestino = encontrada;
       }
 
+      const fechaRaw = (args.due_date || args.fecha || '').toString().trim();
       const body = {
-        title: args.title || 'Nueva tarea',
-        notes: args.description || ''
+        title: tituloLimpio,
+        notes: (args.description || args.descripcion || '').toString().trim()
       };
-      if (args.due_date && /^\d{4}-\d{2}-\d{2}/.test(args.due_date)) {
-        body.due = `${args.due_date.substring(0, 10)}T09:00:00.000Z`;
+      if (fechaRaw && /^\d{4}-\d{2}-\d{2}/.test(fechaRaw)) {
+        body.due = `${fechaRaw.substring(0, 10)}T09:00:00.000Z`;
       }
 
       const queryParams = parentId ? `?parent=${encodeURIComponent(parentId)}` : '';
@@ -512,8 +527,88 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
         ok: true,
         _newGoogleAccessToken: tokenRenovadoEnEstaLlamada,
         mensaje: `Tarea "${creada.title}" creada en la lista "${listaDestino.title}"`,
+        tarea: creada.title,
+        lista: listaDestino.title,
+        fecha: fechaRaw ? fechaRaw.substring(0, 10) : null,
         detalles_guardados: body.notes,
         id: creada.id
+      };
+    }
+
+    if (accion === 'crear_tareas_lote') {
+      let listaNuevas = args.tareas;
+      if (typeof listaNuevas === 'string') {
+        try { listaNuevas = JSON.parse(listaNuevas); } catch (e) { listaNuevas = []; }
+      }
+
+      const nombresListas = todasLasListas.map(l => l.title).join(', ');
+
+      if (!Array.isArray(listaNuevas) || listaNuevas.length === 0) {
+        return {
+          ok: false,
+          error: `El parámetro "tareas" debe ser un array con al menos 1 objeto { title, category, due_date }. Listas disponibles: ${nombresListas}.`
+        };
+      }
+
+      // Validamos TODAS las tareas antes de tocar Google Tasks
+      const tareasValidadas = [];
+      for (const item of listaNuevas) {
+        const title = (item?.title || item?.titulo || item?.name || '').toString().trim();
+        const category = (item?.category || item?.lista || item?.list || '').toString().trim();
+        const dueDate = (item?.due_date || item?.fecha || item?.date || '').toString().trim();
+        const description = (item?.description || item?.descripcion || item?.notes || '').toString().trim();
+
+        if (!title) {
+          return {
+            ok: false,
+            error: `Hay un elemento en "tareas" sin "title" válido (recibido: ${JSON.stringify(item)}). No se ha creado ninguna tarea. Vuelve a llamar pasando objetos completos con { "title": "...", "category": "...", "due_date": "YYYY-MM-DD" }.`
+          };
+        }
+
+        const listaDestino = category ? buscarListaPorNombre(category) : todasLasListas[0];
+        if (!listaDestino) {
+          return {
+            ok: false,
+            error: `La lista "${category}" no existe. Listas disponibles exactas: ${nombresListas}. Vuelve a llamar usando uno de esos nombres exactos.`
+          };
+        }
+
+        tareasValidadas.push({ title, listaDestino, dueDate, description });
+      }
+
+      // Ahora sí, creamos todas en paralelo sabiendo que los datos son 100% válidos
+      const resultados = await Promise.all(
+        tareasValidadas.map(async (t) => {
+          try {
+            const body = {
+              title: t.title,
+              notes: t.description
+            };
+            if (t.dueDate && /^\d{4}-\d{2}-\d{2}/.test(t.dueDate)) {
+              body.due = `${t.dueDate.substring(0, 10)}T09:00:00.000Z`;
+            }
+
+            const creada = await gFetch(
+              `${TASKS_BASE}/lists/${encodeURIComponent(t.listaDestino.id)}/tasks`,
+              { method: 'POST', body: JSON.stringify(body) }
+            );
+
+            return {
+              ok: true,
+              tarea: creada.title,
+              lista: t.listaDestino.title,
+              fecha: t.dueDate ? t.dueDate.substring(0, 10) : null
+            };
+          } catch (e) {
+            return { ok: false, tarea: t.title, error: e.message };
+          }
+        })
+      );
+
+      return {
+        ok: true,
+        _newGoogleAccessToken: tokenRenovadoEnEstaLlamada,
+        tareas_creadas: resultados
       };
     }
 
