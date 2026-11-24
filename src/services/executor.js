@@ -194,15 +194,17 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
     };
   }
 
-  // 9. ACTUALIZAR BLOQUE DE MEMORIA VIVA ESTRUCTURADA (Estilo Claude)
+  // 9. ACTUALIZAR BLOQUE DE MEMORIA VIVA ESTRUCTURADA (Insensible a _ / - / tildes)
   if (nombre === 'actualizar_bloque_memoria') {
-    const tema = (args.topic || args.title || 'general')
+    const normalizarClave = (s) => String(s || '')
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '') || 'general';
+      .replace(/^-|-$/g, '');
 
+    const tema = normalizarClave(args.topic || args.title || 'general') || 'general';
+    const tituloClave = normalizarClave(args.title || '');
     const kind = String(args.kind || 'tema').toLowerCase() === 'area' ? 'area' : 'tema';
     const title = (args.title || tema.replace(/-/g, ' ')).trim();
     const summary = (args.summary || '').trim();
@@ -220,12 +222,18 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
 
     const factFallback = [summary, ...details.map(d => `- ${d}`)].filter(Boolean).join('\n') || title;
 
-    const { data: existentes } = await supabase
+    // Comparamos todos los bloques del usuario normalizando _ y - para evitar duplicados
+    const { data: todos } = await supabase
       .from('user_memories')
-      .select('id')
+      .select('id, category, title, updated_at')
       .eq('user_id', userId)
-      .eq('category', tema)
       .order('updated_at', { ascending: false });
+
+    const existentes = (todos || []).filter(m => {
+      const catClave = normalizarClave(m.category);
+      const titClave = normalizarClave(m.title);
+      return catClave === tema || (tituloClave && (catClave === tituloClave || titClave === tituloClave));
+    });
 
     const payload = {
       category: tema,
@@ -237,7 +245,7 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
       updated_at: new Date().toISOString()
     };
 
-    if (existentes && existentes.length > 0) {
+    if (existentes.length > 0) {
       const idPrincipal = existentes[0].id;
       const { data: actualizada, error } = await supabase
         .from('user_memories')
@@ -260,6 +268,44 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
       .select();
 
     return error ? { error: error.message } : { ok: true, bloque_creado: creada[0] };
+  }
+
+  // 10. OLVIDAR BLOQUE DE MEMORIA
+  if (nombre === 'olvidar_bloque_memoria') {
+    const normalizarTexto = (s) => String(s || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+
+    const qNorm = normalizarTexto(args.topic);
+    if (!qNorm) return { ok: false, error: 'Falta indicar qué tema eliminar.' };
+
+    const { data: todos } = await supabase
+      .from('user_memories')
+      .select('id, category, title')
+      .eq('user_id', userId);
+
+    const aBorrar = (todos || []).filter(m => {
+      const catNorm = normalizarTexto(m.category);
+      const titNorm = normalizarTexto(m.title);
+      return catNorm === qNorm || titNorm === qNorm || catNorm.includes(qNorm) || titNorm.includes(qNorm);
+    });
+
+    if (aBorrar.length === 0) {
+      return { ok: false, error: `No se encontró ningún bloque que coincida con "${args.topic}".` };
+    }
+
+    const { error } = await supabase
+      .from('user_memories')
+      .delete()
+      .in('id', aBorrar.map(m => m.id))
+      .eq('user_id', userId);
+
+    return error
+      ? { error: error.message }
+      : { ok: true, bloques_eliminados: aBorrar.map(m => m.title || m.category) };
   }
 
   // 10. OLVIDAR BLOQUE DE MEMORIA
