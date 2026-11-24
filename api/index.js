@@ -67,7 +67,7 @@ function extraerRecibos(nombre, args, res) {
     }));
   }
   if (nombre === 'actualizar_bloque_memoria') {
-    return [{ type: 'MEMORIA', label: args.topic || 'Actualizada' }];
+    return [{ type: 'MEMORIA', label: args.title || args.topic || 'Actualizada' }];
   }
   if (nombre === 'registrar_comida') {
     return [{ type: 'NUTRICIÓN', label: `${args.description} (${args.calories} kcal)` }];
@@ -155,11 +155,11 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, stravaConnected: true });
       }
 
-      // 2. Gestión directa del panel visual de Memorias
+      // 2. Gestión directa del panel visual de Memorias estilo Claude
       if (body.mode === 'list_memories') {
         const { data: mems } = await supabase
           .from('user_memories')
-          .select('id, category, fact, updated_at')
+          .select('id, category, kind, title, summary, details, fact, updated_at')
           .eq('user_id', userId)
           .order('updated_at', { ascending: false });
         return res.status(200).json({ memories: mems || [] });
@@ -172,6 +172,84 @@ export default async function handler(req, res) {
           .eq('id', body.memoryId)
           .eq('user_id', userId);
         return res.status(200).json({ ok: true });
+      }
+
+      if (body.mode === 'edit_memory_prompt' && body.instruction) {
+        const { data: actuales } = await supabase
+          .from('user_memories')
+          .select('id, category, kind, title, summary, details, fact, updated_at')
+          .eq('user_id', userId)
+          .order('updated_at', { ascending: false });
+
+        const contextoMems = (actuales || []).map(m => {
+          const det = Array.isArray(m.details) && m.details.length > 0
+            ? m.details.map(d => `  - ${d}`).join('\n')
+            : `  - ${m.fact || ''}`;
+          return `[${(m.kind || 'tema').toUpperCase()}] slug="${m.category}" | título="${m.title || m.category}"\nResumen: ${m.summary || ''}\nDetalles:\n${det}`;
+        }).join('\n\n');
+
+        const enfoque = body.activeTopic
+          ? `El usuario está viendo ahora mismo el bloque con slug "${body.activeTopic}". Aplica el cambio sobre ese bloque salvo que pida explícitamente crear, mover o borrar otro.`
+          : 'El usuario está en la vista general de memoria. Crea, consolida, actualiza o elimina los bloques necesarios (puedes borrar slugs antiguos redundantes con olvidar_bloque_memoria tras consolidarlos).';
+
+        const memoryToolsOnly = [{
+          functionDeclarations: assistantTools[0].functionDeclarations.filter(
+            f => f.name === 'actualizar_bloque_memoria' || f.name === 'olvidar_bloque_memoria'
+          )
+        }];
+
+        const ahoraMem = new Date().toLocaleDateString('es-ES', {
+          timeZone: 'Europe/Madrid', year: 'numeric', month: 'long', day: 'numeric'
+        });
+
+        const promptSistemaMem = `
+          Eres el gestor de memoria estructurada de Jarvis. Hoy es ${ahoraMem}.
+          ${enfoque}
+
+          MEMORIA ACTUAL DEL USUARIO:
+          ${contextoMems || 'Sin bloques todavía.'}
+
+          REGLAS:
+          - Clasifica categorías continuas en kind="tema" y metas/proyectos/eventos concretos en kind="area".
+          - Ejecuta los cambios llamando a 'actualizar_bloque_memoria' (con topic, kind, title, summary y el array completo de details) y/o 'olvidar_bloque_memoria'.
+          - Elimina fechas pasadas que ya no aporten valor y conserva hitos o resultados importantes.
+        `;
+
+        let memContents = [{ role: 'user', parts: [{ text: body.instruction }] }];
+        let memResp = await llamarGeminiConReintento({
+          model: MODELO_GEMINI,
+          contents: memContents,
+          config: { systemInstruction: promptSistemaMem, tools: memoryToolsOnly }
+        });
+
+        while (memResp.functionCalls && memResp.functionCalls.length > 0) {
+          memContents.push(memResp.candidates[0].content);
+          const parts = [];
+          for (const call of memResp.functionCalls) {
+            const resTool = await ejecutarHerramienta(call.name, call.args, userId, null, null);
+            parts.push({
+              functionResponse: { name: call.name, response: { result: resTool } }
+            });
+          }
+          memContents.push({ role: 'user', parts });
+          memResp = await llamarGeminiConReintento({
+            model: MODELO_GEMINI,
+            contents: memContents,
+            config: { systemInstruction: promptSistemaMem, tools: memoryToolsOnly }
+          });
+        }
+
+        const { data: actualizadas } = await supabase
+          .from('user_memories')
+          .select('id, category, kind, title, summary, details, fact, updated_at')
+          .eq('user_id', userId)
+          .order('updated_at', { ascending: false });
+
+        return res.status(200).json({
+          ok: true,
+          reply: memResp.text || 'Memoria actualizada.',
+          memories: actualizadas || []
+        });
       }
 
       // 3. Transcripción de voz con reintento automático
@@ -208,10 +286,10 @@ export default async function handler(req, res) {
       const [memRes, ctxRes] = await Promise.all([
         supabase
           .from('user_memories')
-          .select('category, fact, updated_at')
+          .select('category, kind, title, summary, details, fact, updated_at')
           .eq('user_id', userId)
           .order('updated_at', { ascending: false })
-          .limit(20),
+          .limit(25),
         supabase
           .from('chat_messages')
           .select('role, content')
@@ -225,7 +303,15 @@ export default async function handler(req, res) {
       const historialRecienteBD = sanitizarHistorial((ctxRes.data || []).reverse());
 
       const bloqueMemoriaTexto = memoriasUsuario.length > 0
-        ? memoriasUsuario.map(m => `### [${m.category}]\n${m.fact}`).join('\n\n')
+        ? memoriasUsuario.map(m => {
+            const titulo = m.title || m.category;
+            const tipo = (m.kind || 'tema').toUpperCase();
+            const detalles = Array.isArray(m.details) && m.details.length > 0
+              ? m.details.map(d => `- ${d}`).join('\n')
+              : (m.fact || '');
+            const resumen = m.summary ? `Resumen: ${m.summary}\n` : '';
+            return `### [${tipo}] ${titulo} (slug: ${m.category})\n${resumen}${detalles}`;
+          }).join('\n\n')
         : 'Todavía no hay bloques de memoria guardados para este usuario.';
 
       const { message } = body;
@@ -268,8 +354,8 @@ export default async function handler(req, res) {
         4. CONTINUIDAD: Tienes el historial de las últimas horas arriba. Si el usuario vuelve más tarde diciendo "he acabado esto, lo otro no me dio tiempo", retoma el plan inmediatamente y mueve las tareas pendientes en Google Tasks.
         5. VERIFICACIÓN ESTRICTA: Nunca confirmes al usuario que has creado o movido tareas si la herramienta devolvió 'ok: false' o un número distinto de tareas al que planeas mencionar. Si una herramienta devuelve error de formato o lista no encontrada, corrige los argumentos y vuelve a llamarla antes de contestar.
         
-        MEMORIA VIVA POR BLOQUES:
-        - Al llamar a 'actualizar_bloque_memoria', pasa el RESUMEN COMPLETO CONSOLIDADO del tema, integrando lo nuevo y eliminando planes pasados que ya caducaron (hoy es ${fechaLegible}).
+        MEMORIA VIVA POR BLOQUES (ESTILO CLAUDE):
+        - Al llamar a 'actualizar_bloque_memoria', pasa siempre topic (slug), kind ("tema" para categorías continuas o "area" para metas/proyectos concretos), title, summary (1 frase) y details (array completo consolidado con fechas absolutas, borrando planes pasados irrelevantes según hoy ${fechaLegible}).
 
         OTRAS REGLAS:
         - Si 'consultar_estado_dia' devuelve 'google_conectado: false', muestra exactamente 'error_google'.

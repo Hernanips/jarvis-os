@@ -194,15 +194,31 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
     };
   }
 
-  // 9. ACTUALIZAR BLOQUE DE MEMORIA VIVA (1 documento vivo consolidado por tema y usuario)
+  // 9. ACTUALIZAR BLOQUE DE MEMORIA VIVA ESTRUCTURADA (Estilo Claude)
   if (nombre === 'actualizar_bloque_memoria') {
-    const tema = (args.topic || 'general')
+    const tema = (args.topic || args.title || 'general')
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_|_$/g, '') || 'general';
-    const resumen = (args.summary || '').trim();
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'general';
+
+    const kind = String(args.kind || 'tema').toLowerCase() === 'area' ? 'area' : 'tema';
+    const title = (args.title || tema.replace(/-/g, ' ')).trim();
+    const summary = (args.summary || '').trim();
+
+    let details = args.details;
+    if (typeof details === 'string') {
+      try {
+        details = JSON.parse(details);
+      } catch {
+        details = details.split('\n').map(s => s.replace(/^[-•*]\s*/, '').trim()).filter(Boolean);
+      }
+    }
+    if (!Array.isArray(details)) details = [];
+    details = details.map(d => String(d).trim()).filter(Boolean);
+
+    const factFallback = [summary, ...details.map(d => `- ${d}`)].filter(Boolean).join('\n') || title;
 
     const { data: existentes } = await supabase
       .from('user_memories')
@@ -211,16 +227,25 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
       .eq('category', tema)
       .order('updated_at', { ascending: false });
 
+    const payload = {
+      category: tema,
+      kind,
+      title,
+      summary,
+      details,
+      fact: factFallback,
+      updated_at: new Date().toISOString()
+    };
+
     if (existentes && existentes.length > 0) {
       const idPrincipal = existentes[0].id;
       const { data: actualizada, error } = await supabase
         .from('user_memories')
-        .update({ fact: resumen, updated_at: new Date().toISOString() })
+        .update(payload)
         .eq('id', idPrincipal)
         .eq('user_id', userId)
         .select();
 
-      // Eliminamos filas duplicadas antiguas del mismo tema para mantener 1 bloque limpio
       if (existentes.length > 1) {
         const idsDuplicados = existentes.slice(1).map(x => x.id);
         await supabase.from('user_memories').delete().in('id', idsDuplicados).eq('user_id', userId);
@@ -231,11 +256,7 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
 
     const { data: creada, error } = await supabase
       .from('user_memories')
-      .insert([{
-        user_id: userId,
-        category: tema,
-        fact: resumen
-      }])
+      .insert([{ user_id: userId, ...payload }])
       .select();
 
     return error ? { error: error.message } : { ok: true, bloque_creado: creada[0] };

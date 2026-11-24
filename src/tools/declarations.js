@@ -331,22 +331,36 @@ export const assistantTools = [
       },
 
       // --- MEMORIA VIVA POR TEMAS (MULTIUSUARIO ESTILO CLAUDE) ---
+      // --- MEMORIA VIVA ESTRUCTURADA ESTILO CLAUDE (TEMAS Y ÁREAS) ---
       {
         name: 'actualizar_bloque_memoria',
-        description: 'Crea o reescribe por completo el bloque de memoria viva de un tema relevante para el usuario (trabajo, estudios, hogar, familia, deporte, salud, proyectos, preferencias, etc.). Úsala de forma proactiva cuando el usuario comparta datos importantes, objetivos, rutinas o hitos. IMPORTANTE: Pasa siempre el resumen COMPLETO y CONSOLIDADO del tema, fusionando lo que sigue vigente con lo nuevo y ELIMINANDO fechas o planes pasados que ya caducaron.',
+        description: 'Crea o actualiza por completo una tarjeta de memoria viva estilo Claude. Usa kind="tema" para ámbitos continuos de la vida del usuario (ej: Gimnasio, Salud, Estudios, Trabajo, Preferencias) y kind="area" para proyectos, entregas o metas concretas con horizonte temporal (ej: Carrera 8K, Media Maratón Valencia, Proyecto X). Pasa siempre el contenido COMPLETO y CONSOLIDADO fusionando lo vigente con lo nuevo y eliminando fechas o planes ya obsoletos.',
         parameters: {
           type: Type.OBJECT,
           properties: {
             topic: {
               type: Type.STRING,
-              description: 'Identificador corto del tema en minúsculas y guiones bajos adaptado al usuario (ej: "perfil_y_preferencias", "trabajo_y_proyectos", "estudios", "hogar_y_rutinas", "salud_y_deporte", "objetivos")'
+              description: 'Identificador slug estable en minúsculas y guiones (ej: "gimnasio", "carrera-8k", "media-maraton-valencia", "estudios-upv")'
+            },
+            kind: {
+              type: Type.STRING,
+              description: '"tema" (categoría continua) o "area" (meta, evento o proyecto concreto)'
+            },
+            title: {
+              type: Type.STRING,
+              description: 'Título limpio para mostrar en la interfaz (ej: "Gimnasio", "Carrera 8K", "Media Maratón Valencia")'
             },
             summary: {
               type: Type.STRING,
-              description: 'Resumen estructurado, limpio y actualizado del tema (puedes usar viñetas breves). Solo información vigente, hitos relevantes y fechas absolutas; elimina eventos pasados irrelevantes.'
+              description: 'Resumen breve de 1 frase que describe de qué trata este bloque'
+            },
+            details: {
+              type: Type.ARRAY,
+              description: 'Lista de viñetas concretas con fechas absolutas cuando aplique. Puedes referenciar otros bloques por su slug (ej: "ver carrera-8k").',
+              items: { type: Type.STRING }
             }
           },
-          required: ['topic', 'summary']
+          required: ['topic', 'kind', 'title', 'summary', 'details']
         }
       },
       {
