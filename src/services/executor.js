@@ -195,73 +195,66 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
     };
   }
 
-  // 9. GUARDAR MEMORIA A LARGO PLAZO (Estilo Claude)
-  if (nombre === 'guardar_memoria') {
-    const { data, error } = await supabase
+  // 9. ACTUALIZAR BLOQUE DE MEMORIA VIVA (1 documento vivo consolidado por tema y usuario)
+  if (nombre === 'actualizar_bloque_memoria') {
+    const tema = (args.topic || 'general')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_|_$/g, '') || 'general';
+    const resumen = (args.summary || '').trim();
+
+    const { data: existentes } = await supabase
+      .from('user_memories')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('category', tema)
+      .order('updated_at', { ascending: false });
+
+    if (existentes && existentes.length > 0) {
+      const idPrincipal = existentes[0].id;
+      const { data: actualizada, error } = await supabase
+        .from('user_memories')
+        .update({ fact: resumen, updated_at: new Date().toISOString() })
+        .eq('id', idPrincipal)
+        .eq('user_id', userId)
+        .select();
+
+      // Eliminamos filas duplicadas antiguas del mismo tema para mantener 1 bloque limpio
+      if (existentes.length > 1) {
+        const idsDuplicados = existentes.slice(1).map(x => x.id);
+        await supabase.from('user_memories').delete().in('id', idsDuplicados).eq('user_id', userId);
+      }
+
+      return error ? { error: error.message } : { ok: true, bloque_actualizado: actualizada[0] };
+    }
+
+    const { data: creada, error } = await supabase
       .from('user_memories')
       .insert([{
         user_id: userId,
-        category: args.category || 'general',
-        fact: args.fact
+        category: tema,
+        fact: resumen
       }])
       .select();
 
-    return error ? { error: error.message } : { ok: true, memoria_guardada: data[0] };
+    return error ? { error: error.message } : { ok: true, bloque_creado: creada[0] };
   }
 
-  // 10. ACTUALIZAR MEMORIA EXISTENTE
-  if (nombre === 'actualizar_memoria') {
-    const { data: encontradas } = await supabase
-      .from('user_memories')
-      .select('*')
-      .eq('user_id', userId)
-      .ilike('fact', `%${args.search_text}%`)
-      .order('updated_at', { ascending: false })
-      .limit(1);
-
-    if (!encontradas || encontradas.length === 0) {
-      // Si no existía una previa que coincidiera, la creamos directamente
-      const { data, error } = await supabase
-        .from('user_memories')
-        .insert([{ user_id: userId, category: 'general', fact: args.new_fact }])
-        .select();
-      return error ? { error: error.message } : { ok: true, memoria_creada: data[0] };
-    }
-
-    const { data: actualizada, error } = await supabase
-      .from('user_memories')
-      .update({ fact: args.new_fact, updated_at: new Date().toISOString() })
-      .eq('id', encontradas[0].id)
-      .eq('user_id', userId)
-      .select();
-
-    return error ? { error: error.message } : { ok: true, memoria_actualizada: actualizada[0] };
-  }
-
-  // 11. OLVIDAR / BORRAR MEMORIA
-  if (nombre === 'olvidar_memoria') {
-    const { data: encontradas } = await supabase
-      .from('user_memories')
-      .select('*')
-      .eq('user_id', userId)
-      .ilike('fact', `%${args.search_text}%`)
-      .order('updated_at', { ascending: false })
-      .limit(1);
-
-    if (!encontradas || encontradas.length === 0) {
-      return { ok: false, error: `No se encontró ningún recuerdo con "${args.search_text}"` };
-    }
-
+  // 10. OLVIDAR BLOQUE DE MEMORIA
+  if (nombre === 'olvidar_bloque_memoria') {
+    const q = (args.topic || '').trim();
     const { error } = await supabase
       .from('user_memories')
       .delete()
-      .eq('id', encontradas[0].id)
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .or(`category.ilike.%${q}%,fact.ilike.%${q}%`);
 
-    return error ? { error: error.message } : { ok: true, memoria_eliminada: encontradas[0].fact };
+    return error ? { error: error.message } : { ok: true, tema_eliminado: q };
   }
 
-  // 12. CONSULTAR ENTRENOS DE STRAVA (Historial completo y analítica)
+  // 11. CONSULTAR ENTRENOS DE STRAVA (Historial completo y analítica)
   if (nombre === 'consultar_entrenos_strava') {
     return await consultarEntrenosStrava(userId, {
       limit: args.limit || 60,

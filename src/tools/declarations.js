@@ -282,55 +282,37 @@ export const assistantTools = [
         }
       },
 
-      // --- MEMORIA DE LARGO PLAZO ESTILO CLAUDE (Supabase) ---
+      // --- MEMORIA VIVA POR TEMAS (MULTIUSUARIO ESTILO CLAUDE) ---
       {
-        name: 'guardar_memoria',
-        description: 'Guarda de forma proactiva y automática en la memoria a largo plazo cualquier hecho relevante sobre el usuario que acabe de mencionar en la conversación (ej: carreras futuras como 8K/5K/Media Maratón, tiempos objetivo, metas de calorías/peso, lesiones, estudios, proyectos, equipamiento o preferencias personales). Úsala por iniciativa propia sin que el usuario tenga que pedirte "guarda esto".',
+        name: 'actualizar_bloque_memoria',
+        description: 'Crea o reescribe por completo el bloque de memoria viva de un tema relevante para el usuario (trabajo, estudios, hogar, familia, deporte, salud, proyectos, preferencias, etc.). Úsala de forma proactiva cuando el usuario comparta datos importantes, objetivos, rutinas o hitos. IMPORTANTE: Pasa siempre el resumen COMPLETO y CONSOLIDADO del tema, fusionando lo que sigue vigente con lo nuevo y ELIMINANDO fechas o planes pasados que ya caducaron.',
         parameters: {
           type: Type.OBJECT,
           properties: {
-            category: {
+            topic: {
               type: Type.STRING,
-              description: 'Categoría corta: "objetivos_deporte", "nutricion_salud", "academico_proyectos", "preferencias" o "personal"'
+              description: 'Identificador corto del tema en minúsculas y guiones bajos adaptado al usuario (ej: "perfil_y_preferencias", "trabajo_y_proyectos", "estudios", "hogar_y_rutinas", "salud_y_deporte", "objetivos")'
             },
-            fact: {
+            summary: {
               type: Type.STRING,
-              description: 'Hecho claro, conciso y con fechas absolutas si aplica (ej: "Tiene una carrera de 8K a mediados de noviembre de 2026, busca bajar de 30 min en 5K en enero de 2027 y correr la Media Maratón de Valencia en octubre de 2027")'
+              description: 'Resumen estructurado, limpio y actualizado del tema (puedes usar viñetas breves). Solo información vigente, hitos relevantes y fechas absolutas; elimina eventos pasados irrelevantes.'
             }
           },
-          required: ['category', 'fact']
+          required: ['topic', 'summary']
         }
       },
       {
-        name: 'actualizar_memoria',
-        description: 'Modifica un recuerdo o dato existente en la memoria a largo plazo cuando la situación, marca u objetivo del usuario cambia o progresa.',
+        name: 'olvidar_bloque_memoria',
+        description: 'Elimina por completo un bloque temático de la memoria si el usuario pide olvidarlo o deja de tener relevancia.',
         parameters: {
           type: Type.OBJECT,
           properties: {
-            search_text: {
+            topic: {
               type: Type.STRING,
-              description: 'Palabra clave o fragmento del recuerdo actual que se quiere actualizar (ej: "5K", "Media Maratón", "calorías")'
-            },
-            new_fact: {
-              type: Type.STRING,
-              description: 'Nuevo texto actualizado del recuerdo'
+              description: 'Nombre del tema o palabra clave del bloque a eliminar'
             }
           },
-          required: ['search_text', 'new_fact']
-        }
-      },
-      {
-        name: 'olvidar_memoria',
-        description: 'Elimina un recuerdo de la memoria a largo plazo si ya no es válido o el usuario pide que lo olvides.',
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            search_text: {
-              type: Type.STRING,
-              description: 'Palabra clave del recuerdo a borrar'
-            }
-          },
-          required: ['search_text']
+          required: ['topic']
         }
       },
 
