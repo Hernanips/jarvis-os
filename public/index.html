@@ -1139,6 +1139,20 @@
             flex-wrap: wrap;
             gap: 6px;
         }
+        .msg-heading {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--text-strong);
+            margin: 12px 0 6px 0;
+        }
+        .msg-divider {
+            border: none;
+            border-top: 1px dashed var(--border);
+            margin: 12px 0;
+        }
     </style>
 </head>
 <body>
@@ -2069,10 +2083,21 @@
         function formatearTexto(texto) {
             const lineas = String(texto || '').split('\n');
             const procesadas = lineas.map(linea => {
+                const trimmed = linea.trim();
+
+                if (/^-{3,}$/.test(trimmed)) {
+                    return `<hr class="msg-divider">`;
+                }
+                if (/^#{1,3}\s+/.test(trimmed)) {
+                    const titulo = trimmed.replace(/^#{1,3}\s+/, '').replace(/\*\*(.*?)\*\*/g, '$1');
+                    return `<div class="msg-heading">${titulo}</div>`;
+                }
+
                 const esLista = /^\s*[-•*]\s+/.test(linea);
                 let l = esLista ? linea.replace(/^\s*[-•*]\s+/, '') : linea;
 
                 l = l
+                    .replace(/`([^`\n]+)`/g, '<span class="nothing-badge">$1</span>')
                     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                     .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>')
                     .replace(/\[PENDIENTE\]/gi, '<span class="nothing-badge pending">PENDIENTE</span>')
@@ -2085,7 +2110,12 @@
                 return l;
             });
 
-            return procesadas.join('<br>').replace(/<\/div><br><div class="msg-list-item">/g, '</div><div class="msg-list-item">');
+            return procesadas
+                .join('<br>')
+                .replace(/<\/div><br><div class="msg-list-item">/g, '</div><div class="msg-list-item">')
+                .replace(/(?:<br>)*<hr class="msg-divider">(?:<br>)*/g, '<hr class="msg-divider">')
+                .replace(/(?:<br>)*<div class="msg-heading">/g, '<div class="msg-heading">')
+                .replace(/<\/div><br>/g, '</div>');
         }
 
         function enviarRapido(texto) {
