@@ -2098,6 +2098,7 @@
 
                 l = l
                     .replace(/`([^`\n]+)`/g, '<span class="nothing-badge">$1</span>')
+                    .replace(/~~(.*?)~~/g, '<del style="opacity:0.55;">$1</del>')
                     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                     .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>')
                     .replace(/\[PENDIENTE\]/gi, '<span class="nothing-badge pending">PENDIENTE</span>')
