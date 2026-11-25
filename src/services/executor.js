@@ -308,18 +308,6 @@ export async function ejecutarHerramienta(nombre, args, userId, googleToken, goo
       : { ok: true, bloques_eliminados: aBorrar.map(m => m.title || m.category) };
   }
 
-  // 10. OLVIDAR BLOQUE DE MEMORIA
-  if (nombre === 'olvidar_bloque_memoria') {
-    const q = (args.topic || '').trim();
-    const { error } = await supabase
-      .from('user_memories')
-      .delete()
-      .eq('user_id', userId)
-      .or(`category.ilike.%${q}%,fact.ilike.%${q}%`);
-
-    return error ? { error: error.message } : { ok: true, tema_eliminado: q };
-  }
-
   // 11. CONSULTAR ENTRENOS DE STRAVA (Historial completo y analítica)
   if (nombre === 'consultar_entrenos_strava') {
     return await consultarEntrenosStrava(userId, {

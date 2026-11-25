@@ -2010,16 +2010,18 @@
         function formatearTexto(texto) {
             const lineas = String(texto || '').split('\n');
             const procesadas = lineas.map(linea => {
-                let l = linea
+                const esLista = /^\s*[-•*]\s+/.test(linea);
+                let l = esLista ? linea.replace(/^\s*[-•*]\s+/, '') : linea;
+
+                l = l
                     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                    .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>')
                     .replace(/\[PENDIENTE\]/gi, '<span class="nothing-badge pending">PENDIENTE</span>')
                     .replace(/\[HECHA\]/gi, '<span class="nothing-badge done">HECHA</span>')
                     .replace(/(\b\d+(?:[.,]\d+)?\s*(?:kcal|g\b|kg\b))/gi, '<span class="nothing-badge">$1</span>');
 
-                if (/^\s*[-•*]\s+/.test(l)) {
-                    const contenido = l.replace(/^\s*[-•*]\s+/, '');
-                    return `<div class="msg-list-item"><span class="msg-bullet">▪</span><span>${contenido}</span></div>`;
+                if (esLista) {
+                    return `<div class="msg-list-item"><span class="msg-bullet">▪</span><span>${l}</span></div>`;
                 }
                 return l;
             });
@@ -2325,6 +2327,14 @@
                     chatBox.innerHTML += `<div class="message assistant" style="color: var(--nothing-red);">${data.error || 'Sesión expirada.'}</div>`;
                     authModal.style.display = 'flex';
                     setEstadoGenerando(false);
+                    return;
+                }
+
+                if (!res.ok) {
+                    const msgError = data.error || (res.status === 504
+                        ? 'Tiempo de espera agotado (504). El servidor tardó demasiado en completar todas las acciones.'
+                        : `Error del servidor (HTTP ${res.status}).`);
+                    chatBox.innerHTML += `<div class="message assistant" style="color: var(--nothing-red);">${msgError}</div>`;
                     return;
                 }
 

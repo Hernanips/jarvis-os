@@ -167,7 +167,7 @@ export const assistantTools = [
       },
       {
         name: 'editar_tarea',
-        description: 'Modifica una tarea existente en Google Tasks: cambia título, añade o cambia su descripción (description), cambia fecha (due_date), la mueve a otra lista (new_category) o cambia su estado (completed)[cite: 4]. Cuando el usuario pida reorganizar o repartir varias tareas, llama a esta herramienta tantas veces seguidas como sea necesario en el mismo turno de forma autónoma sin pedir confirmación.',
+        description: 'Modifica una tarea existente en Google Tasks: cambia título, añade o cambia su descripción (description), cambia fecha (due_date), la mueve a otra lista (new_category) o cambia su estado (completed). Cuando el usuario pida reorganizar o repartir varias tareas, llama a esta herramienta tantas veces seguidas como sea necesario en el mismo turno de forma autónoma sin pedir confirmación.',
         parameters: {
           type: Type.OBJECT,
           properties: {
@@ -182,6 +182,28 @@ export const assistantTools = [
         }
       },
       {
+        name: 'reorganizar_tareas_lote',
+        description: 'Cambia la fecha de vencimiento (due_date) de MÚLTIPLES tareas existentes a la vez en una sola llamada paralela. Úsala SIEMPRE que el usuario pida reorganizar, mover, extender o repartir varias tareas pendientes entre distintos días.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            cambios: {
+              type: Type.ARRAY,
+              description: 'Lista de tareas existentes a mover con su nueva fecha',
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  search_title: { type: Type.STRING, description: 'Título actual de la tarea a mover' },
+                  due_date: { type: Type.STRING, description: 'Nueva fecha en formato YYYY-MM-DD' }
+                },
+                required: ['search_title', 'due_date']
+              }
+            }
+          },
+          required: ['cambios']
+        }
+      },
+      {
         name: 'crear_tareas_lote',
         description: 'Crea MÚLTIPLES tareas a la vez en Google Tasks en paralelo. Úsala siempre que haya que crear 2 o más tareas (por ejemplo, dividir un trabajo o páginas en varios días). Ejemplo exacto de parámetro: { "tareas": [ { "title": "Sketchbook: 7 páginas", "category": "UPV", "due_date": "2026-11-25" }, { "title": "Sketchbook: 7 páginas", "category": "UPV", "due_date": "2026-11-26" } ] }.',
         parameters: {
@@ -189,16 +211,16 @@ export const assistantTools = [
           properties: {
             tareas: {
               type: Type.ARRAY,
-              description: 'Array de objetos. Cada objeto DEBE tener title (string), category (nombre exacto de la lista del usuario) y due_date (YYYY-MM-DD).',
+              description: 'Array de objetos. Cada objeto DEBE tener title (string), category (nombre exacto de la lista del usuario) y opcionalmente due_date (YYYY-MM-DD).',
               items: {
                 type: Type.OBJECT,
                 properties: {
                   title: { type: Type.STRING, description: 'Título descriptivo de la tarea (obligatorio, nunca vacío)' },
                   category: { type: Type.STRING, description: 'Nombre exacto de la lista de Google Tasks del usuario (ej: "UPV")' },
-                  due_date: { type: Type.STRING, description: 'Fecha en formato YYYY-MM-DD' },
+                  due_date: { type: Type.STRING, description: 'Fecha opcional en formato YYYY-MM-DD. Omítela o déjala vacía si la tarea todavía no tiene fecha definida.' },
                   description: { type: Type.STRING, description: 'Detalles o notas opcionales' }
                 },
-                required: ['title', 'category', 'due_date']
+                required: ['title', 'category']
               }
             }
           },

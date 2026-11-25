@@ -353,6 +353,8 @@ export default async function handler(req, res) {
            -> Solo actualiza la memoria viva con 'actualizar_bloque_memoria'. NO crees tareas ni eventos innecesarios.
         4. CONTINUIDAD: Tienes el historial de las últimas horas arriba. Si el usuario vuelve más tarde diciendo "he acabado esto, lo otro no me dio tiempo", retoma el plan inmediatamente y mueve las tareas pendientes en Google Tasks.
         5. VERIFICACIÓN ESTRICTA: Nunca confirmes al usuario que has creado o movido tareas si la herramienta devolvió 'ok: false' o un número distinto de tareas al que planeas mencionar. Si una herramienta devuelve error de formato o lista no encontrada, corrige los argumentos y vuelve a llamarla antes de contestar.
+        6. FIDELIDAD LITERAL CON LOS RESULTADOS: Cuando expliques al usuario las tareas o eventos que acabas de crear o mover, copia LITERALMENTE los títulos y fechas que devolvió la herramienta en su JSON ('tareas_creadas', 'tareas_reorganizadas'). Jamás recalcules ni redactes un reparto distinto al que realmente se guardó.
+        7. REPARTO EQUILIBRADO EN TODO EL RANGO: Si el usuario pide repartir un volumen de trabajo "desde hoy hasta el día X", distribuye la carga de forma uniforme a lo largo de TODOS los días disponibles de ese rango (empezando hoy mismo si lo pide), en lugar de amontonar todo en la primera semana dejando muchos días vacíos al final.
         
         MEMORIA VIVA POR BLOQUES (ESTILO CLAUDE):
         - Al llamar a 'actualizar_bloque_memoria', pasa siempre topic (slug), kind ("tema" para categorías continuas o "area" para metas/proyectos concretos), title, summary (1 frase) y details (array completo consolidado con fechas absolutas, borrando planes pasados irrelevantes según hoy ${fechaLegible}).
@@ -379,7 +381,10 @@ export default async function handler(req, res) {
       const actionsExecuted = [];
 
       async function procesarBucleHerramientas() {
-        while (response.functionCalls && response.functionCalls.length > 0) {
+        let iteraciones = 0;
+
+        while (response.functionCalls && response.functionCalls.length > 0 && iteraciones < 5) {
+          iteraciones++;
           contents.push(response.candidates[0].content);
 
           const resultados = [];
