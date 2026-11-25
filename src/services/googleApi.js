@@ -171,20 +171,23 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
 
     async function buscarEventoEnTodos(nombreBuscado) {
       const query = normalizar(nombreBuscado);
-      const timeMin = new Date(Date.now() - 365 * 86400000).toISOString();
-      const timeMax = new Date(Date.now() + 365 * 86400000).toISOString();
+      const timeMin = new Date(Date.now() - 180 * 86400000).toISOString();
+      const timeMax = new Date(Date.now() + 550 * 86400000).toISOString();
 
-      for (const cal of misCalendarios) {
-        const url = `${CAL_BASE}/calendars/${encodeURIComponent(cal.id)}/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true`;
-        const resEv = await gFetch(url);
-        const eventos = resEv.items || [];
-        for (const ev of eventos) {
-          if (normalizar(ev.summary).includes(query)) {
-            return { evento: ev, calendario: cal };
-          }
-        }
-      }
-      return null;
+      const resultados = await Promise.all(
+        misCalendarios.map(async (cal) => {
+          const url = `${CAL_BASE}/calendars/${encodeURIComponent(cal.id)}/events?q=${encodeURIComponent(nombreBuscado)}&timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&maxResults=50`;
+          const resEv = await gFetch(url).catch(() => ({ items: [] }));
+          const eventos = resEv.items || [];
+          const match = eventos.find(ev => {
+            const sum = normalizar(ev.summary);
+            return sum && (sum.includes(query) || query.includes(sum));
+          });
+          return match ? { evento: match, calendario: cal } : null;
+        })
+      );
+
+      return resultados.find(Boolean) || null;
     }
 
     function construirRRULE(tipo, intervalo, diasSemanaStr) {

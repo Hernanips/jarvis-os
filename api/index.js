@@ -22,6 +22,51 @@ function elegirCadenaModelos(mensaje = '') {
   return esComplejo ? MODELOS_POTENTES : MODELOS_RAPIDOS;
 }
 
+const modelosEnPausa = new Map(); // modelo -> timestamp hasta cuándo saltarlo
+
+async function llamarGeminiConReintento(params, cadenaModelos = MODELOS_RAPIDOS) {
+  let ultimoError = null;
+
+  for (const modelo of cadenaModelos) {
+    if (Date.now() < (modelosEnPausa.get(modelo) || 0)) {
+      continue;
+    }
+
+    for (let intento = 1; intento <= 2; intento++) {
+      try {
+        return await ai.models.generateContent({ ...params, model: modelo });
+      } catch (err) {
+        ultimoError = err;
+        const msg = String(err?.message || err || '');
+
+        const esCuotaDiaria = /per day|free_tier_requests|daily/i.test(msg);
+        const esNoEncontrado = /404|not found/i.test(msg);
+        const esTemporal = !esCuotaDiaria && /503|429|overloaded|unavailable|resource exhausted|high demand|muy solicitado/i.test(msg);
+
+        if (esCuotaDiaria || esNoEncontrado) {
+          modelosEnPausa.set(modelo, Date.now() + 15 * 60 * 1000);
+          console.warn(`⚠️ [${modelo}] sin cupo diario o no disponible. Pausado 15m y saltando...`);
+          break;
+        }
+
+        if (esTemporal && intento < 2) {
+          await new Promise(resolve => setTimeout(resolve, 1200));
+          continue;
+        }
+
+        if (esTemporal) {
+          console.warn(`⚠️ [${modelo}] saturado (503). Saltando al siguiente modelo...`);
+          break;
+        }
+
+        throw err;
+      }
+    }
+  }
+
+  throw ultimoError || new Error('429 RESOURCE_EXHAUSTED: Todos los modelos configurados están pausados por cuota.');
+}
+
 // Cascada inteligente: salta al instante si se agota la cuota diaria (429 RPD) o tras 1 reintento en picos (503)
 async function llamarGeminiConReintento(params, cadenaModelos = MODELOS_RAPIDOS) {
   let ultimoError = null;
