@@ -2088,8 +2088,8 @@
                 if (/^-{3,}$/.test(trimmed)) {
                     return `<hr class="msg-divider">`;
                 }
-                if (/^#{1,3}\s+/.test(trimmed)) {
-                    const titulo = trimmed.replace(/^#{1,3}\s+/, '').replace(/\*\*(.*?)\*\*/g, '$1');
+                if (/^#{1,6}\s+/.test(trimmed)) {
+                    const titulo = trimmed.replace(/^#{1,6}\s+/, '').replace(/\*\*(.*?)\*\*/g, '$1');
                     return `<div class="msg-heading">${titulo}</div>`;
                 }
 
