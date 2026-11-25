@@ -3,25 +3,77 @@ import { assistantTools } from '../src/tools/declarations.js';
 import { ejecutarHerramienta } from '../src/services/executor.js';
 import { intercambiarCodigoStrava } from '../src/services/stravaApi.js';
 
-const MODELO_CHAT = 'gemini-3.5-flash';      // Mejor razonamiento para planificar (comprueba en AI Studio el ID exacto sin -lite que tengas activo)
-const MODELO_VOZ = 'gemini-3.5-flash-lite';  // Rápido y ligero para transcripción de audio
+// Orden de preferencia (cada modelo tiene su propia cuota diaria en Free Tier)
+const MODELOS_POTENTES = [
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite'
+];
 
-async function llamarGeminiConReintento(params, maxIntentos = 3) {
+const MODELOS_RAPIDOS = [
+  'gemini-3.5-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-3.6-flash'
+];
+
+// Detecta si la petición requiere razonamiento complejo (planificar, analizar Strava, lotes grandes)
+function elegirCadenaModelos(mensaje = '') {
+  const esComplejo = /reorgani|repart|distribuy|planific|organ[ií]z|strava|entreno|carrera|marat[oó]n|ritmo|pulsacion|cronograma|examen/i.test(mensaje);
+  return esComplejo ? MODELOS_POTENTES : MODELOS_RAPIDOS;
+}
+
+// Cascada inteligente: salta al instante si se agota la cuota diaria (429 RPD) o tras 1 reintento en picos (503)
+async function llamarGeminiConReintento(params, cadenaModelos = MODELOS_RAPIDOS) {
   let ultimoError = null;
-  for (let intento = 1; intento <= maxIntentos; intento++) {
-    try {
-      return await ai.models.generateContent(params);
-    } catch (err) {
-      ultimoError = err;
-      const msg = String(err?.message || err || '');
-      const esTemporal = /503|429|overloaded|unavailable|resource exhausted|high demand|muy solicitado/i.test(msg);
-      if (!esTemporal || intento === maxIntentos) {
+
+  for (const modelo of cadenaModelos) {
+    for (let intento = 1; intento <= 2; intento++) {
+      try {
+        return await ai.models.generateContent({ ...params, model: modelo });
+      } catch (err) {
+        ultimoError = err;
+        const msg = String(err?.message || err || '');
+
+        const esCuotaDiaria = /per day|free_tier_requests|daily/i.test(msg);
+        const esNoEncontrado = /404|not found/i.test(msg);
+        const esTemporal = !esCuotaDiaria && /503|429|overloaded|unavailable|resource exhausted|high demand|muy solicitado/i.test(msg);
+
+        // Si se acabó el cupo diario o el ID no existe, saltamos INMEDIATAMENTE al siguiente modelo
+        if (esCuotaDiaria || esNoEncontrado) {
+          console.warn(`⚠️ [${modelo}] sin cupo diario o no disponible. Saltando al siguiente modelo...`);
+          break;
+        }
+
+        // Si es saturación puntual (503/RPM), esperamos 1.2s y reintentamos 1 vez antes de saltar
+        if (esTemporal && intento < 2) {
+          await new Promise(resolve => setTimeout(resolve, 1200));
+          continue;
+        }
+
+        // Si falla el segundo intento o es otro error temporal, probamos el siguiente modelo
+        if (esTemporal) {
+          console.warn(`⚠️ [${modelo}] saturado (503). Saltando al siguiente modelo...`);
+          break;
+        }
+
+        // Error real de petición (400, etc.): no tiene sentido reintentar
         throw err;
       }
-      await new Promise(resolve => setTimeout(resolve, intento * 1400));
     }
   }
+
   throw ultimoError;
+}
+
+function formatearErrorAmigable(error) {
+  const msg = String(error?.message || error || '');
+  if (/429|resource_exhausted|quota/i.test(msg)) {
+    return 'Se ha agotado la cuota gratuita de los modelos configurados por hoy. Vuelve a intentarlo más tarde o añade otro modelo de respaldo en api/index.js.';
+  }
+  if (/503|unavailable|high demand|overloaded/i.test(msg)) {
+    return 'Los servidores de Gemini están saturados en este momento (503). Inténtalo de nuevo en unos segundos.';
+  }
+  return msg;
 }
 
 // Construye recibos verificados únicamente cuando la herramienta devolvió éxito real
@@ -218,10 +270,9 @@ export default async function handler(req, res) {
 
         let memContents = [{ role: 'user', parts: [{ text: body.instruction }] }];
         let memResp = await llamarGeminiConReintento({
-          model: MODELO_CHAT,
           contents: memContents,
           config: { systemInstruction: promptSistemaMem, tools: memoryToolsOnly }
-        });
+        }, MODELOS_RAPIDOS);
 
         while (memResp.functionCalls && memResp.functionCalls.length > 0) {
           memContents.push(memResp.candidates[0].content);
@@ -234,10 +285,9 @@ export default async function handler(req, res) {
           }
           memContents.push({ role: 'user', parts });
           memResp = await llamarGeminiConReintento({
-            model: MODELO_CHAT,
             contents: memContents,
             config: { systemInstruction: promptSistemaMem, tools: memoryToolsOnly }
-          });
+          }, MODELOS_RAPIDOS);
         }
 
         const { data: actualizadas } = await supabase
@@ -257,7 +307,6 @@ export default async function handler(req, res) {
       if (body.mode === 'transcribe' && body.audioBase64) {
         const cleanMime = (body.mimeType || 'audio/webm').split(';')[0];
         const transResponse = await llamarGeminiConReintento({
-          model: MODELO_VOZ,
           contents: [
             {
               role: 'user',
@@ -274,7 +323,7 @@ export default async function handler(req, res) {
               ]
             }
           ]
-        });
+        }, MODELOS_RAPIDOS);
 
         return res.status(200).json({
           transcript: (transResponse.text || '').trim()
@@ -378,11 +427,12 @@ export default async function handler(req, res) {
         { role: 'user', parts: [{ text: message }] }
       ];
 
+      const cadenaChat = elegirCadenaModelos(message);
+
       let response = await llamarGeminiConReintento({
-        model: MODELO_CHAT,
-        contents,
-        config: { systemInstruction, tools: assistantTools }
-      });
+            contents,
+            config: { systemInstruction, tools: assistantTools }
+      }, cadenaChat);
 
       let refreshedGoogleToken = null;
       const actionsExecuted = [];
@@ -421,10 +471,9 @@ export default async function handler(req, res) {
           contents.push({ role: 'user', parts: resultados });
 
           response = await llamarGeminiConReintento({
-            model: MODELO_CHAT,
             contents,
             config: { systemInstruction, tools: assistantTools }
-          });
+          }, cadenaChat);
         }
       }
 
@@ -445,10 +494,9 @@ export default async function handler(req, res) {
         });
 
         response = await llamarGeminiConReintento({
-          model: MODELO_CHAT,
           contents,
           config: { systemInstruction, tools: assistantTools }
-        });
+        }, cadenaChat);
 
         await procesarBucleHerramientas();
       }
@@ -471,7 +519,7 @@ export default async function handler(req, res) {
       });
     } catch (error) {
       console.error("❌ Error crítico en el servidor:", error);
-      return res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: formatearErrorAmigable(error) });
     }
   }
 
