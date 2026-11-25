@@ -18,7 +18,7 @@ const MODELOS_RAPIDOS = [
 
 // Detecta si la petición requiere razonamiento complejo (planificar, analizar Strava, lotes grandes)
 function elegirCadenaModelos(mensaje = '') {
-  const esComplejo = /reorgani|repart|distribuy|planific|organ[ií]z|strava|entreno|carrera|marat[oó]n|ritmo|pulsacion|cronograma|examen/i.test(mensaje);
+  const esComplejo = /reorgani|repart|distribuy|planific|organ[ií]z|strava|entreno|carrera|marat[oó]n|\b5k\b|\b10k\b|\b21k\b|sub\s*\d+|ritmo|pulsacion|cronograma|examen|corrig|equivoc|transcrip|actualiz|cambi/i.test(mensaje);
   return esComplejo ? MODELOS_POTENTES : MODELOS_RAPIDOS;
 }
 
@@ -318,7 +318,7 @@ export default async function handler(req, res) {
                   }
                 },
                 {
-                  text: 'Transcribe exactamente en español lo que dice este audio. Pon puntuación natural: comas, puntos y signos de interrogación (¿?) o exclamación (¡!) según la entonación. NO respondas a la pregunta ni añadas texto extra ni comillas: devuelve ÚNICAMENTE la transcripción limpia. Si solo hay silencio o ruido sin palabras, devuelve cadena vacía.'
+                  text: 'Transcribe exactamente en español lo que dice este audio. Pon puntuación natural: comas, puntos y signos de interrogación (¿?) o exclamación (¡!) según la entonación. NO respondas a la pregunta ni añadas texto extra ni comillas: devuelve ÚNICAMENTE la transcripción limpia. Si solo hay silencio o ruido sin palabras, devuelve cadena vacía. Respeta nombres propios y localidades reales de España (ej. pueblos, ciudades y carreras) sin sustituirlos por otros países.'
                 }
               ]
             }
@@ -411,6 +411,7 @@ export default async function handler(req, res) {
            - Cruza siempre el calendario: en días con exámenes, entregas o eventos pesados, reduce la carga al mínimo o déjalos libres de tareas extra; y si el usuario tiene clases/trabajo en una franja (ej. mañanas), ajusta la carga diaria a las horas reales disponibles repartiendo hasta el día previo a la fecha límite.
         9. EXHAUSTIVIDAD EN PETICIONES MÚLTIPLES: Si el usuario encadena varias peticiones en un mismo mensaje (tareas en distintas listas, eventos y memoria), haz un recuento mental de TODOS los elementos pedidos antes de responder y asegúrate de haber ejecutado una herramienta para cada uno. Si menciona añadir una tarea en una lista llamada "Jarvis" (o sobre mejoras de la propia app), trátalo literalmente como una tarea a crear en esa lista, nunca como un simple comentario.
         10. CONSCIENCIA DE HORA ACTUAL: Son las ${horaLegible}. Al resumir el día o recomendar qué hacer hoy, ten siempre en cuenta la hora exacta: no le recuerdes clases, comidas o eventos que ya han terminado (o indícalos brevemente como pasados), señala si está en medio de una clase/evento ahora mismo y céntrate en lo que queda pendiente a partir de esta hora.
+        11. CORRECCIONES SOBRE LA MARCHA: Si el usuario corrige un dato del turno anterior (por ejemplo, un error de transcripción de voz, una ciudad, fecha, nombre o tiempo objetivo), NUNCA te limites a disculparte o confirmar solo de palabra. Debes llamar OBLIGATORIAMENTE a las herramientas necesarias para arreglar TODOS los sitios donde se guardó el dato erróneo: usa 'editar_evento' o 'editar_tarea' si ya se creó mal en Google, Y 'actualizar_bloque_memoria' para corregir el bloque de memoria.
 
         MEMORIA VIVA POR BLOQUES (ESTILO CLAUDE):
         - Al llamar a 'actualizar_bloque_memoria', pasa siempre topic (slug), kind ("tema" para categorías continuas o "area" para metas/proyectos concretos), title, summary (1 frase) y details (array completo consolidado con fechas absolutas, borrando planes pasados irrelevantes según hoy ${fechaLegible}).
@@ -437,7 +438,7 @@ export default async function handler(req, res) {
       let refreshedGoogleToken = null;
       const actionsExecuted = [];
 
-      async function procesarBucleHerramientas() {
+      async function procesarBucleHerramientas(cadena = cadenaChat) {
         let iteraciones = 0;
 
         while (response.functionCalls && response.functionCalls.length > 0 && iteraciones < 5) {
@@ -473,7 +474,7 @@ export default async function handler(req, res) {
           response = await llamarGeminiConReintento({
             contents,
             config: { systemInstruction, tools: assistantTools }
-          }, cadenaChat);
+          }, cadena);
         }
       }
 
@@ -496,9 +497,29 @@ export default async function handler(req, res) {
         response = await llamarGeminiConReintento({
           contents,
           config: { systemInstruction, tools: assistantTools }
-        }, cadenaChat);
+        }, MODELOS_POTENTES);
 
-        await procesarBucleHerramientas();
+        await procesarBucleHerramientas(MODELOS_POTENTES);
+      }
+
+      // Seguro anti-mentiras: si afirma haber guardado/actualizado/corregido algo pero NO ejecutó ninguna herramienta real
+      const afirmoEjecutar = /\bhe\s+(?:actualizado|guardado|añadido|creado|editado|modificado|cambiado|borrado|eliminado|corregido|registrado|movido|reorganizado|agendado)\b|ya\s+(?:está|están|queda|quedan)\s+(?:actualizad|guardad|añadid|cread|editad|corregid|modificad)/i.test(response.text || '');
+
+      if (actionsExecuted.length === 0 && afirmoEjecutar) {
+        contents.push(response.candidates[0].content);
+        contents.push({
+          role: 'user',
+          parts: [{
+            text: 'SISTEMA INTERNO CRÍTICO: Acabas de afirmar al usuario que has actualizado, guardado o corregido datos, pero NO has llamado a ninguna herramienta real. Ejecuta INMEDIATAMENTE las herramientas correspondientes (actualizar_bloque_memoria, editar_evento, editar_tarea, etc.) para aplicar esos cambios de verdad y luego responde brevemente.'
+          }]
+        });
+
+        response = await llamarGeminiConReintento({
+          contents,
+          config: { systemInstruction, tools: assistantTools }
+        }, MODELOS_POTENTES);
+
+        await procesarBucleHerramientas(MODELOS_POTENTES);
       }
 
       const replyText = response.text || 'Hecho.';
