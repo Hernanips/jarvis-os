@@ -3,7 +3,8 @@ import { assistantTools } from '../src/tools/declarations.js';
 import { ejecutarHerramienta } from '../src/services/executor.js';
 import { intercambiarCodigoStrava } from '../src/services/stravaApi.js';
 
-const MODELO_GEMINI = 'gemini-3.5-flash-lite';
+const MODELO_CHAT = 'gemini-3.5-flash';      // Mejor razonamiento para planificar (comprueba en AI Studio el ID exacto sin -lite que tengas activo)
+const MODELO_VOZ = 'gemini-3.5-flash-lite';  // Rápido y ligero para transcripción de audio
 
 async function llamarGeminiConReintento(params, maxIntentos = 3) {
   let ultimoError = null;
@@ -217,7 +218,7 @@ export default async function handler(req, res) {
 
         let memContents = [{ role: 'user', parts: [{ text: body.instruction }] }];
         let memResp = await llamarGeminiConReintento({
-          model: MODELO_GEMINI,
+          model: MODELO_CHAT,
           contents: memContents,
           config: { systemInstruction: promptSistemaMem, tools: memoryToolsOnly }
         });
@@ -233,7 +234,7 @@ export default async function handler(req, res) {
           }
           memContents.push({ role: 'user', parts });
           memResp = await llamarGeminiConReintento({
-            model: MODELO_GEMINI,
+            model: MODELO_CHAT,
             contents: memContents,
             config: { systemInstruction: promptSistemaMem, tools: memoryToolsOnly }
           });
@@ -256,7 +257,7 @@ export default async function handler(req, res) {
       if (body.mode === 'transcribe' && body.audioBase64) {
         const cleanMime = (body.mimeType || 'audio/webm').split(';')[0];
         const transResponse = await llamarGeminiConReintento({
-          model: MODELO_GEMINI,
+          model: MODELO_VOZ,
           contents: [
             {
               role: 'user',
@@ -355,7 +356,11 @@ export default async function handler(req, res) {
         5. VERIFICACIÓN ESTRICTA: Nunca confirmes al usuario que has creado o movido tareas si la herramienta devolvió 'ok: false' o un número distinto de tareas al que planeas mencionar. Si una herramienta devuelve error de formato o lista no encontrada, corrige los argumentos y vuelve a llamarla antes de contestar.
         6. FIDELIDAD LITERAL CON LOS RESULTADOS: Cuando expliques al usuario las tareas o eventos que acabas de crear o mover, copia LITERALMENTE los títulos y fechas que devolvió la herramienta en su JSON ('tareas_creadas', 'tareas_reorganizadas'). Jamás recalcules ni redactes un reparto distinto al que realmente se guardó.
         7. REPARTO EQUILIBRADO EN TODO EL RANGO: Si el usuario pide repartir un volumen de trabajo "desde hoy hasta el día X", distribuye la carga de forma uniforme a lo largo de TODOS los días disponibles de ese rango (empezando hoy mismo si lo pide), en lugar de amontonar todo en la primera semana dejando muchos días vacíos al final.
-        
+        8. PLANIFICACIÓN CON RESTRICCIONES REALES:
+           - Antes de llamar a 'crear_tareas_lote', verifica mentalmente que la SUMA exacta de unidades/páginas coincide con el total pedido por el usuario (no pierdas ni añadas elementos).
+           - Respeta TODAS las restricciones acumuladas en turnos anteriores de la conversación (ej. no dejar tareas sueltas, empezar hoy, mayor dificultad en ciertos bloques) salvo que el usuario las revoque.
+           - Cruza siempre el calendario: en días con exámenes, entregas o eventos pesados, reduce la carga al mínimo o déjalos libres de tareas extra; y si el usuario tiene clases/trabajo en una franja (ej. mañanas), ajusta la carga diaria a las horas reales disponibles repartiendo hasta el día previo a la fecha límite.
+
         MEMORIA VIVA POR BLOQUES (ESTILO CLAUDE):
         - Al llamar a 'actualizar_bloque_memoria', pasa siempre topic (slug), kind ("tema" para categorías continuas o "area" para metas/proyectos concretos), title, summary (1 frase) y details (array completo consolidado con fechas absolutas, borrando planes pasados irrelevantes según hoy ${fechaLegible}).
 
@@ -372,7 +377,7 @@ export default async function handler(req, res) {
       ];
 
       let response = await llamarGeminiConReintento({
-        model: MODELO_GEMINI,
+        model: MODELO_CHAT,
         contents,
         config: { systemInstruction, tools: assistantTools }
       });
@@ -414,7 +419,7 @@ export default async function handler(req, res) {
           contents.push({ role: 'user', parts: resultados });
 
           response = await llamarGeminiConReintento({
-            model: MODELO_GEMINI,
+            model: MODELO_CHAT,
             contents,
             config: { systemInstruction, tools: assistantTools }
           });
@@ -438,7 +443,7 @@ export default async function handler(req, res) {
         });
 
         response = await llamarGeminiConReintento({
-          model: MODELO_GEMINI,
+          model: MODELO_CHAT,
           contents,
           config: { systemInstruction, tools: assistantTools }
         });

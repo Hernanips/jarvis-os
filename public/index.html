@@ -1080,6 +1080,65 @@
             color: var(--btn-disabled-text);
             cursor: not-allowed;
         }
+
+        /* DESPLEGABLE DE RECIBOS EN LOTES GRANDES (NOTHING OS) */
+        .receipts-accordion {
+            width: 100%;
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .receipts-summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 8px 11px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+            user-select: none;
+            transition: background 0.15s, color 0.15s;
+        }
+        .receipts-summary::-webkit-details-marker { display: none; }
+        .receipts-summary:hover {
+            background: var(--bg-hover);
+            color: var(--text-main);
+        }
+        .receipts-summary-left {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            flex-wrap: wrap;
+            line-height: 1.3;
+        }
+        .receipts-summary-dots {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .receipts-summary-title {
+            color: var(--text-strong);
+            font-weight: 600;
+        }
+        .receipts-chevron {
+            flex-shrink: 0;
+            color: var(--text-muted);
+            transition: transform 0.2s ease;
+        }
+        .receipts-accordion[open] .receipts-chevron {
+            transform: rotate(180deg);
+        }
+        .receipts-accordion-body {
+            padding: 8px 10px 10px;
+            border-top: 1px dashed var(--border);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
     </style>
 </head>
 <body>
@@ -2339,18 +2398,7 @@
                 }
 
                 const reply = data.reply || data.error || 'Sin respuesta del servidor.';
-                let recibosHtml = '';
-                const acciones = Array.isArray(data.actions) ? data.actions : [];
-
-                if (acciones.length > 0) {
-                    const chips = acciones.map(a => {
-                        const tipoLower = (a.type || '').toLowerCase();
-                        const esMem = tipoLower === 'memoria';
-                        const clickAttr = esMem ? 'onclick="abrirModalMemorias()"' : '';
-                        return `<div class="receipt-chip ${esMem ? 'clickable' : ''}" ${clickAttr}><span class="receipt-dot ${tipoLower}"></span><span class="receipt-type">${a.type}</span><span>${a.label}</span></div>`;
-                    }).join('');
-                    recibosHtml = `<div class="action-receipts">${chips}</div>`;
-                }
+                const recibosHtml = renderizarRecibosHtml(data.actions);
 
                 vibrar(10);
                 chatBox.innerHTML += `<div class="message assistant">${formatearTexto(reply)}${recibosHtml}</div>`;
@@ -2374,6 +2422,76 @@
                     .then((reg) => reg.update())
                     .catch((err) => console.log("Error al registrar el Service Worker:", err));
             });
+        }
+
+        function renderizarRecibosHtml(acciones) {
+            if (!Array.isArray(acciones) || acciones.length === 0) return '';
+
+            const chipsHtml = acciones.map(a => {
+                const tipoLower = (a.type || '').toLowerCase();
+                const esMem = tipoLower === 'memoria';
+                const clickAttr = esMem ? 'onclick="abrirModalMemorias()"' : '';
+                return `<div class="receipt-chip ${esMem ? 'clickable' : ''}" ${clickAttr}><span class="receipt-dot ${tipoLower}"></span><span class="receipt-type">${escapeHtml(a.type)}</span><span>${escapeHtml(a.label)}</span></div>`;
+            }).join('');
+
+            // Si son 4 o menos, se muestran directamente a la vista
+            if (acciones.length <= 4) {
+                return `<div class="action-receipts">${chipsHtml}</div>`;
+            }
+
+            // Si son 5 o más, generamos un resumen compacto desplegable
+            let creadas = 0, borradas = 0, movidas = 0, hechas = 0, cal = 0, mem = 0, otras = 0;
+            const tiposPresentes = new Set();
+
+            acciones.forEach(a => {
+                const t = (a.type || '').toUpperCase();
+                const lbl = String(a.label || '');
+                tiposPresentes.add(t.toLowerCase());
+
+                if (t === 'TASKS') {
+                    if (/^Borrada:/i.test(lbl)) borradas++;
+                    else if (/→/.test(lbl)) movidas++;
+                    else if (/\(Hecha\)/i.test(lbl)) hechas++;
+                    else creadas++;
+                } else if (t === 'CALENDAR') {
+                    cal++;
+                } else if (t === 'MEMORIA') {
+                    mem++;
+                } else {
+                    otras++;
+                }
+            });
+
+            const partes = [];
+            if (creadas) partes.push(`${creadas} ${creadas === 1 ? 'creada' : 'creadas'}`);
+            if (movidas) partes.push(`${movidas} ${movidas === 1 ? 'movida' : 'movidas'}`);
+            if (hechas) partes.push(`${hechas} ${hechas === 1 ? 'hecha' : 'hechas'}`);
+            if (borradas) partes.push(`${borradas} ${borradas === 1 ? 'borrada' : 'borradas'}`);
+            if (cal) partes.push(`${cal} ${cal === 1 ? 'evento' : 'eventos'}`);
+            if (mem) partes.push(`memoria`);
+            if (otras) partes.push(`${otras} ${otras === 1 ? 'registro' : 'registros'}`);
+
+            const dotsHtml = [...tiposPresentes]
+                .map(t => `<span class="receipt-dot ${t}"></span>`)
+                .join('');
+
+            return `
+                <div class="action-receipts">
+                    <details class="receipts-accordion" ontoggle="vibrar(8)">
+                        <summary class="receipts-summary">
+                            <span class="receipts-summary-left">
+                                <span class="receipts-summary-dots">${dotsHtml}</span>
+                                <span class="receipts-summary-title">${acciones.length} ACCIONES</span>
+                                <span>· ${partes.join(' · ')}</span>
+                            </span>
+                            <svg class="receipts-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                        </summary>
+                        <div class="receipts-accordion-body">${chipsHtml}</div>
+                    </details>
+                </div>
+            `;
         }
     </script>
 </body>
