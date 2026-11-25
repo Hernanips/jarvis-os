@@ -67,49 +67,6 @@ async function llamarGeminiConReintento(params, cadenaModelos = MODELOS_RAPIDOS)
   throw ultimoError || new Error('429 RESOURCE_EXHAUSTED: Todos los modelos configurados están pausados por cuota.');
 }
 
-// Cascada inteligente: salta al instante si se agota la cuota diaria (429 RPD) o tras 1 reintento en picos (503)
-async function llamarGeminiConReintento(params, cadenaModelos = MODELOS_RAPIDOS) {
-  let ultimoError = null;
-
-  for (const modelo of cadenaModelos) {
-    for (let intento = 1; intento <= 2; intento++) {
-      try {
-        return await ai.models.generateContent({ ...params, model: modelo });
-      } catch (err) {
-        ultimoError = err;
-        const msg = String(err?.message || err || '');
-
-        const esCuotaDiaria = /per day|free_tier_requests|daily/i.test(msg);
-        const esNoEncontrado = /404|not found/i.test(msg);
-        const esTemporal = !esCuotaDiaria && /503|429|overloaded|unavailable|resource exhausted|high demand|muy solicitado/i.test(msg);
-
-        // Si se acabó el cupo diario o el ID no existe, saltamos INMEDIATAMENTE al siguiente modelo
-        if (esCuotaDiaria || esNoEncontrado) {
-          console.warn(`⚠️ [${modelo}] sin cupo diario o no disponible. Saltando al siguiente modelo...`);
-          break;
-        }
-
-        // Si es saturación puntual (503/RPM), esperamos 1.2s y reintentamos 1 vez antes de saltar
-        if (esTemporal && intento < 2) {
-          await new Promise(resolve => setTimeout(resolve, 1200));
-          continue;
-        }
-
-        // Si falla el segundo intento o es otro error temporal, probamos el siguiente modelo
-        if (esTemporal) {
-          console.warn(`⚠️ [${modelo}] saturado (503). Saltando al siguiente modelo...`);
-          break;
-        }
-
-        // Error real de petición (400, etc.): no tiene sentido reintentar
-        throw err;
-      }
-    }
-  }
-
-  throw ultimoError;
-}
-
 function formatearErrorAmigable(error) {
   const msg = String(error?.message || error || '');
   if (/429|resource_exhausted|quota/i.test(msg)) {
