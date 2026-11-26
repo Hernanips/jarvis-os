@@ -19,7 +19,7 @@ const MODELOS_RAPIDOS = [
 
 // Detecta si la petición requiere razonamiento complejo (planificar, analizar Strava, lotes grandes)
 function elegirCadenaModelos(mensaje = '') {
-  const esComplejo = /reorgani|repart|distribuy|planific|organ[ií]z|strava|entreno|entrenamiento|carrera|marat[oó]n|\b5k\b|\b10k\b|\b21k\b|sub\s*\d+|ritmo|pulsacion|cronograma|examen|corrig|equivoc|transcrip|actualiz|cambi|modific|sketchbook|adelant|termin[eé]|acab[eé]|quit[eé]|subtarea|pr[aá]ctica|anatom[ií]a|perspectiva/i.test(mensaje);
+  const esComplejo = /reorgani|repart|distribuy|planific|organ[ií]z|strava|entreno|carrera|marat[oó]n|\b5k\b|\b10k\b|\b21k\b|sub\s*\d+|ritmo|pulsacion|cronograma|corrig|equivoc|subtarea/i.test(mensaje);
   return esComplejo ? MODELOS_POTENTES : MODELOS_RAPIDOS;
 }
 
@@ -41,7 +41,7 @@ async function llamarGeminiConReintento(params, cadenaModelos = MODELOS_RAPIDOS)
     }
 
     const t0 = Date.now();
-    const timeoutMs = /lite/i.test(modelo) ? 12000 : 18000;
+    const timeoutMs = /lite/i.test(modelo) ? 10000 : 10000;
 
     try {
       const res = await conTimeout(
