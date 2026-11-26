@@ -160,7 +160,8 @@ export const assistantTools = [
             category: { type: Type.STRING, description: 'Nombre exacto de la lista de destino donde mejor encaje según las listas del usuario.' },
             description: { type: Type.STRING, description: 'Descripción, notas o detalles adicionales de la tarea' },
             due_date: { type: Type.STRING, description: 'Fecha de vencimiento en formato YYYY-MM-DD' },
-            parent_title: { type: Type.STRING, description: 'Si es una subtarea, nombre de la tarea principal' }
+            parent_title: { type: Type.STRING, description: 'Si es una subtarea, nombre de la tarea principal' },
+            subtasks: { type: Type.ARRAY, description: 'Opcional: lista de subtareas concretas dentro de esta tarea padre (ej: ["1 ejercicio de práctica", "2 páginas de anatomía"]). Úsalo siempre que una tarea diaria agrupe 2 o más bloques distintos para poder marcarlos por separado.', items: { type: Type.STRING } }
           },
           required: ['title', 'category']
         }
@@ -218,7 +219,8 @@ export const assistantTools = [
                   title: { type: Type.STRING, description: 'Título descriptivo de la tarea (obligatorio, nunca vacío)' },
                   category: { type: Type.STRING, description: 'Nombre exacto de la lista de Google Tasks del usuario (ej: "UPV")' },
                   due_date: { type: Type.STRING, description: 'Fecha opcional en formato YYYY-MM-DD. Omítela o déjala vacía si la tarea todavía no tiene fecha definida.' },
-                  description: { type: Type.STRING, description: 'Detalles o notas opcionales' }
+                  description: { type: Type.STRING, description: 'Detalles o notas opcionales' },
+                  subtasks: { type: Type.ARRAY, description: 'Opcional: lista de subtareas concretas dentro de esta tarea padre (ej: ["1 ejercicio de práctica", "2 páginas de anatomía"]). Úsalo siempre que una tarea diaria agrupe 2 o más bloques distintos para poder marcarlos por separado.', items: { type: Type.STRING } }
                 },
                 required: ['title', 'category']
               }

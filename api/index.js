@@ -18,7 +18,7 @@ const MODELOS_RAPIDOS = [
 
 // Detecta si la petición requiere razonamiento complejo (planificar, analizar Strava, lotes grandes)
 function elegirCadenaModelos(mensaje = '') {
-  const esComplejo = /reorgani|repart|distribuy|planific|organ[ií]z|strava|entreno|carrera|marat[oó]n|\b5k\b|\b10k\b|\b21k\b|sub\s*\d+|ritmo|pulsacion|cronograma|examen|corrig|equivoc|transcrip|actualiz|cambi/i.test(mensaje);
+  const esComplejo = /reorgani|repart|distribuy|planific|organ[ií]z|strava|entreno|entrenamiento|carrera|marat[oó]n|\b5k\b|\b10k\b|\b21k\b|sub\s*\d+|ritmo|pulsacion|cronograma|examen|corrig|equivoc|transcrip|actualiz|cambi|modific|sketchbook|adelant|termin[eé]|acab[eé]|quit[eé]|subtarea|pr[aá]ctica|anatom[ií]a|perspectiva/i.test(mensaje);
   return esComplejo ? MODELOS_POTENTES : MODELOS_RAPIDOS;
 }
 
@@ -94,14 +94,15 @@ function extraerRecibos(nombre, args, res) {
   if (nombre === 'crear_tarea') {
     const lista = res.lista ? `[${res.lista}] ` : '';
     const f = res.fecha ? ` · ${res.fecha}` : (args.due_date ? ` · ${args.due_date}` : '');
-    return [{ type: 'TASKS', label: `${lista}${res.tarea || args.title}${f}` }];
+    const subTxt = Array.isArray(res.subtareas) && res.subtareas.length > 0 ? ` (+${res.subtareas.length} subtareas)` : '';
+    return [{ type: 'TASKS', label: `${lista}${res.tarea || args.title}${f}${subTxt}` }];
   }
   if (nombre === 'crear_tareas_lote' && Array.isArray(res.tareas_creadas)) {
     return res.tareas_creadas
       .filter(t => t.ok)
       .map(t => ({
         type: 'TASKS',
-        label: `[${t.lista}] ${t.tarea}${t.fecha ? ' · ' + t.fecha : ''}`
+        label: `[${t.lista}] ${t.tarea}${t.fecha ? ' · ' + t.fecha : ''}${Array.isArray(t.subtareas) && t.subtareas.length > 0 ? ` (+${t.subtareas.length} sub)` : ''}`
       }));
   }
   if (nombre === 'editar_tarea') {
@@ -414,6 +415,14 @@ export default async function handler(req, res) {
         9. EXHAUSTIVIDAD EN PETICIONES MÚLTIPLES: Si el usuario encadena varias peticiones en un mismo mensaje (tareas en distintas listas, eventos y memoria), haz un recuento mental de TODOS los elementos pedidos antes de responder y asegúrate de haber ejecutado una herramienta para cada uno. Si menciona añadir una tarea en una lista llamada "Jarvis" (o sobre mejoras de la propia app), trátalo literalmente como una tarea a crear en esa lista, nunca como un simple comentario.
         10. CONSCIENCIA DE HORA ACTUAL: Son las ${horaLegible}. Al resumir el día o recomendar qué hacer hoy, ten siempre en cuenta la hora exacta: no le recuerdes clases, comidas o eventos que ya han terminado (o indícalos brevemente como pasados), señala si está en medio de una clase/evento ahora mismo y céntrate en lo que queda pendiente a partir de esta hora.
         11. CORRECCIONES SOBRE LA MARCHA: Si el usuario corrige un dato del turno anterior (por ejemplo, un error de transcripción de voz, una ciudad, fecha, nombre o tiempo objetivo), NUNCA te limites a disculparte o confirmar solo de palabra. Debes llamar OBLIGATORIAMENTE a las herramientas necesarias para arreglar TODOS los sitios donde se guardó el dato erróneo: usa 'editar_evento' o 'editar_tarea' si ya se creó mal en Google, Y 'actualizar_bloque_memoria' para corregir el bloque de memoria.
+        12. AVANCES PARCIALES, FUERA DE ORDEN Y SUBTAREAS:
+        - NUNCA marques una tarea compuesta como 'completed: true' si el usuario solo completó una parte de ella o hizo otros elementos distintos. Marca como completada únicamente una tarea (o subtarea individual) cuando el 100% de lo que dice su título esté terminado.
+        - Si el usuario reporta avances parciales o fuera de orden sobre un proyecto planificado (ej. "me quité 4 de práctica, 1 de perspectiva y encajé 1 libre, pero no toqué anatomía"):
+          1) Llama primero a 'consultar_estado_dia'.
+          2) Marca como completadas las tareas/subtareas realmente terminadas al 100% (incluidas otras asignaturas que mencione, como Color).
+          3) Recalcula los totales EXACTOS que quedan pendientes restando lo ya hecho (y anotando lo que está a medias/encajado).
+          4) Actualiza el bloque de memoria con el nuevo inventario restante y regenera/ajusta las tareas pendientes en Google Tasks para que el plan refleje siempre lo que falta de verdad.
+        - SUBTAREAS OBLIGATORIAS EN TAREAS COMPUESTAS: Cuando crees tareas diarias que combinen 2 o más bloques/elementos distintos (ej. entrenamiento + anatomía, o varios apartados de un trabajo), crea una tarea padre clara para el día y pasa el desglose en el array 'subtasks' de 'crear_tareas_lote' o 'crear_tarea' (ej. subtasks: ["1 ejercicio de práctica", "2 páginas de anatomía"]).
 
         MEMORIA VIVA POR BLOQUES (ESTILO CLAUDE):
         - Al llamar a 'actualizar_bloque_memoria', pasa siempre topic (slug), kind ("tema" para categorías continuas o "area" para metas/proyectos concretos), title, summary (1 frase) y details (array completo consolidado con fechas absolutas, borrando planes pasados irrelevantes según hoy ${fechaLegible}).

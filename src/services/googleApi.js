@@ -482,6 +482,27 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
       return { ok: true, _newGoogleAccessToken: tokenRenovadoEnEstaLlamada, mensaje: 'Tareas completadas limpiadas' };
     }
 
+    async function crearSubtareasEnOrden(listaId, parentId, subtasksRaw) {
+      if (!Array.isArray(subtasksRaw) || subtasksRaw.length === 0) return [];
+      const limpias = subtasksRaw
+        .map(s => (typeof s === 'string' ? s : (s?.title || s?.titulo || '')).trim())
+        .filter(Boolean);
+
+      const creadas = [];
+      let prevId = null;
+      for (const tituloSub of limpias) {
+        const params = new URLSearchParams({ parent: parentId });
+        if (prevId) params.set('previous', prevId);
+        const sub = await gFetch(
+          `${TASKS_BASE}/lists/${encodeURIComponent(listaId)}/tasks?${params.toString()}`,
+          { method: 'POST', body: JSON.stringify({ title: tituloSub }) }
+        );
+        prevId = sub.id;
+        creadas.push(sub.title);
+      }
+      return creadas;
+    }
+
     if (accion === 'crear_tarea') {
       const tituloLimpio = (args.title || args.titulo || '').toString().trim();
       if (!tituloLimpio) {
@@ -525,6 +546,9 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
         `${TASKS_BASE}/lists/${encodeURIComponent(listaDestino.id)}/tasks${queryParams}`,
         { method: 'POST', body: JSON.stringify(body) }
       );
+      const subtareasCreadas = (!parentId && Array.isArray(args.subtasks))
+      ? await crearSubtareasEnOrden(listaDestino.id, creada.id, args.subtasks)
+      : [];
 
       return {
         ok: true,
@@ -534,7 +558,8 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
         lista: listaDestino.title,
         fecha: fechaRaw ? fechaRaw.substring(0, 10) : null,
         detalles_guardados: body.notes,
-        id: creada.id
+        id: creada.id,
+        subtareas: subtareasCreadas
       };
     }
 
@@ -560,6 +585,7 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
         const category = (item?.category || item?.lista || item?.list || '').toString().trim();
         const dueDate = (item?.due_date || item?.fecha || item?.date || '').toString().trim();
         const description = (item?.description || item?.descripcion || item?.notes || '').toString().trim();
+        const subtasks = Array.isArray(item?.subtasks || item?.subtareas) ? (item.subtasks || item.subtareas) : [];
 
         if (!title) {
           return {
@@ -576,7 +602,7 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
           };
         }
 
-        tareasValidadas.push({ title, listaDestino, dueDate, description });
+        tareasValidadas.push({ title, listaDestino, dueDate, description, subtasks });
       }
 
       // Ahora sí, creamos todas en paralelo sabiendo que los datos son 100% válidos
@@ -596,11 +622,13 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
               { method: 'POST', body: JSON.stringify(body) }
             );
 
+            const subtareasCreadas = await crearSubtareasEnOrden(t.listaDestino.id, creada.id, t.subtasks);
             return {
               ok: true,
               tarea: creada.title,
               lista: t.listaDestino.title,
-              fecha: t.dueDate ? t.dueDate.substring(0, 10) : null
+              fecha: t.dueDate ? t.dueDate.substring(0, 10) : null,
+              subtareas: subtareasCreadas
             };
           } catch (e) {
             return { ok: false, tarea: t.title, error: e.message };
@@ -807,8 +835,11 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
         };
       }
 
+      const idsObjetivo = new Set(objetivos.map(o => o.tarea.id));
+      const objetivosFinales = objetivos.filter(o => !o.tarea.parent || !idsObjetivo.has(o.tarea.parent));
+
       const resultados = await Promise.all(
-        objetivos.map(async (obj) => {
+        objetivosFinales.map(async (obj) => {
           try {
             await gFetch(
               `${TASKS_BASE}/lists/${encodeURIComponent(obj.listaId)}/tasks/${encodeURIComponent(obj.tarea.id)}`,
