@@ -187,20 +187,19 @@ export async function enviarMensaje() {
     return;
   }
 
-  setEstadoGenerando(true);
-  const msgEl = agregarMensajeChat(formatearTexto(reply) + recibosHtml);
-  const btnVoz = adjuntarBotonVozMensaje(msgEl, reply);
-  leerSiActivo(reply, btnVoz);
-
   const loadingId = 'loading-' + Date.now();
-  const loadingDiv = document.createElement('div');
-  loadingDiv.className = 'typing';
-  loadingDiv.id = loadingId;
-  loadingDiv.innerHTML = '<span></span><span></span><span></span>';
-  chatBox.appendChild(loadingDiv);
-  chatBox.scrollTop = chatBox.scrollHeight;
+  setEstadoGenerando(true);
 
   try {
+    agregarMensajeChat(escapeHtml(text).replace(/\n/g, '<br>'), { tipo: 'user' });
+
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'typing';
+    loadingDiv.id = loadingId;
+    loadingDiv.innerHTML = '<span></span><span></span><span></span>';
+    chatBox.appendChild(loadingDiv);
+    chatBox.scrollTop = chatBox.scrollHeight;
+
     const googleToken = sesionActiva.provider_token || localStorage.getItem('jarvis_google_token') || '';
     const googleRefreshToken = sesionActiva.provider_refresh_token || localStorage.getItem('jarvis_google_refresh_token') || '';
 
@@ -208,7 +207,7 @@ export async function enviarMensaje() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${sesionActiva.access_token}`,
+        'Authorization': 'Bearer ' + sesionActiva.access_token,
         'X-Google-Token': googleToken,
         'X-Google-Refresh-Token': googleRefreshToken
       },
@@ -231,7 +230,7 @@ export async function enviarMensaje() {
     if (!res.ok) {
       const msgError = data.error || (res.status === 504
         ? 'Tiempo de espera agotado (504). El servidor tardó demasiado en completar todas las acciones.'
-        : `Error del servidor (HTTP ${res.status}).`);
+        : 'Error del servidor (HTTP ' + res.status + ').');
       agregarMensajeChat(escapeHtml(msgError), { esError: true });
       return;
     }
@@ -240,14 +239,16 @@ export async function enviarMensaje() {
     const recibosHtml = renderizarRecibosHtml(data.actions);
 
     vibrar(10);
-    agregarMensajeChat(`${formatearTexto(reply)}${recibosHtml}`);
+    const msgEl = agregarMensajeChat(formatearTexto(reply) + recibosHtml);
+    const btnVoz = adjuntarBotonVozMensaje(msgEl, reply);
+    leerSiActivo(reply, btnVoz);
 
     state.historial.push({ role: 'user', parts: [{ text }] });
     state.historial.push({ role: 'model', parts: [{ text: reply }] });
     if (state.historial.length > 10) state.historial = state.historial.slice(-10);
   } catch (err) {
     document.getElementById(loadingId)?.remove();
-    agregarMensajeChat(`Error de conexión: ${escapeHtml(err.message)}`, { esError: true });
+    agregarMensajeChat('Error de conexión: ' + escapeHtml(err.message), { esError: true });
   } finally {
     setEstadoGenerando(false);
     chatBox.scrollTop = chatBox.scrollHeight;
