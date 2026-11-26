@@ -24,6 +24,13 @@ function elegirCadenaModelos(mensaje = '') {
 
 const modelosEnPausa = new Map(); // modelo -> timestamp hasta cuándo saltarlo
 
+function conTimeout(promesa, ms) {
+  return Promise.race([
+    promesa,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`TIMEOUT_${ms}ms`)), ms))
+  ]);
+}
+
 async function llamarGeminiConReintento(params, cadenaModelos = MODELOS_RAPIDOS) {
   let ultimoError = null;
 
@@ -33,31 +40,38 @@ async function llamarGeminiConReintento(params, cadenaModelos = MODELOS_RAPIDOS)
     }
 
     for (let intento = 1; intento <= 2; intento++) {
+      const t0 = Date.now();
       try {
-        return await ai.models.generateContent({ ...params, model: modelo });
+        const res = await conTimeout(
+          ai.models.generateContent({ ...params, model: modelo }),
+          15000
+        );
+        console.log(`⚡ [${modelo}] OK en ${Date.now() - t0}ms`);
+        return res;
       } catch (err) {
         ultimoError = err;
         const msg = String(err?.message || err || '');
+        console.warn(`⚠️ [${modelo}] fallo en ${Date.now() - t0}ms: ${msg.slice(0, 120)}`);
 
         const esCuotaDiaria = /per day|free_tier_requests|daily/i.test(msg);
         const esNoEncontrado = /404|not found/i.test(msg);
+        const esTimeout = /TIMEOUT_/i.test(msg);
         const esTemporal = !esCuotaDiaria && /503|429|overloaded|unavailable|resource exhausted|high demand|muy solicitado/i.test(msg);
 
         if (esCuotaDiaria || esNoEncontrado) {
           modelosEnPausa.set(modelo, Date.now() + 15 * 60 * 1000);
-          console.warn(`⚠️ [${modelo}] sin cupo diario o no disponible. Pausado 15m y saltando...`);
           break;
         }
 
+        // Si un modelo tarda >15s, saltamos directo al siguiente (ej: de 3.6-flash a 3.5-flash)
+        if (esTimeout) break;
+
         if (esTemporal && intento < 2) {
-          await new Promise(resolve => setTimeout(resolve, 1200));
+          await new Promise(resolve => setTimeout(resolve, 1000));
           continue;
         }
 
-        if (esTemporal) {
-          console.warn(`⚠️ [${modelo}] saturado (503). Saltando al siguiente modelo...`);
-          break;
-        }
+        if (esTemporal) break;
 
         throw err;
       }
@@ -349,7 +363,7 @@ export default async function handler(req, res) {
           .eq('user_id', userId)
           .gte('created_at', hace14Horas)
           .order('created_at', { ascending: false })
-          .limit(16)
+          .limit(10)
       ]);
 
       const memoriasUsuario = memRes.data || [];
@@ -439,6 +453,7 @@ export default async function handler(req, res) {
         { role: 'user', parts: [{ text: message }] }
       ];
 
+      const inicioReq = Date.now();
       const cadenaChat = elegirCadenaModelos(message);
 
       let response = await llamarGeminiConReintento({
@@ -452,7 +467,7 @@ export default async function handler(req, res) {
       async function procesarBucleHerramientas(cadena = cadenaChat) {
         let iteraciones = 0;
 
-        while (response.functionCalls && response.functionCalls.length > 0 && iteraciones < 5) {
+        while (response.functionCalls && response.functionCalls.length > 0 && iteraciones < 5 && (Date.now() - inicioReq) < 44000) {
           iteraciones++;
           contents.push(response.candidates[0].content);
 
@@ -496,7 +511,7 @@ export default async function handler(req, res) {
       const terminoPreguntando = /\?|quieres que|prefieres|especifica|dime qué|cómo quieres/i.test(response.text || '');
       const ejecutoEnGoogle = actionsExecuted.some(a => a.type === 'TASKS' || a.type === 'CALENDAR');
 
-      if (pidioOrganizar && terminoPreguntando && !ejecutoEnGoogle) {
+      if (pidioOrganizar && terminoPreguntando && !ejecutoEnGoogle && (Date.now() - inicioReq) < 38000) {
         contents.push(response.candidates[0].content);
         contents.push({
           role: 'user',
@@ -516,7 +531,7 @@ export default async function handler(req, res) {
       // Seguro anti-mentiras: si afirma haber guardado/actualizado/corregido algo pero NO ejecutó ninguna herramienta real
       const afirmoEjecutar = /\bhe\s+(?:actualizado|guardado|añadido|creado|editado|modificado|cambiado|borrado|eliminado|corregido|registrado|movido|reorganizado|agendado)\b|ya\s+(?:está|están|queda|quedan)\s+(?:actualizad|guardad|añadid|cread|editad|corregid|modificad)/i.test(response.text || '');
 
-      if (actionsExecuted.length === 0 && afirmoEjecutar) {
+      if (actionsExecuted.length === 0 && afirmoEjecutar && (Date.now() - inicioReq) < 38000) {
         contents.push(response.candidates[0].content);
         contents.push({
           role: 'user',
@@ -533,7 +548,9 @@ export default async function handler(req, res) {
         await procesarBucleHerramientas(MODELOS_POTENTES);
       }
 
-      const replyText = response.text || 'Hecho.';
+      const replyText = response.text || (actionsExecuted.length > 0
+        ? 'He aplicado los cambios que verás en los recibos de abajo (frené el proceso para no agotar el tiempo del servidor). Revisa si falta algún ajuste.'
+        : 'Hecho.');
 
       // Guardamos el turno en chat_messages para mantener la continuidad invisible entre sesiones y dispositivos
       await supabase

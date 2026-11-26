@@ -148,25 +148,23 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
 
     async function buscarTareaPorNombre(nombreBuscado) {
       const query = normalizar(nombreBuscado);
-      let respaldoCompletada = null;
+      const cargas = await Promise.all(
+        todasLasListas.map(async (lista) => {
+          const resT = await gFetch(
+            `${TASKS_BASE}/lists/${encodeURIComponent(lista.id)}/tasks?showCompleted=true&showHidden=false&maxResults=100`
+          ).catch(() => ({ items: [] }));
+          return (resT.items || []).map(t => ({
+            tarea: t,
+            listaId: lista.id,
+            listaNombre: lista.title
+          }));
+        })
+      );
 
-      for (const lista of todasLasListas) {
-        const resT = await gFetch(
-          `${TASKS_BASE}/lists/${encodeURIComponent(lista.id)}/tasks?showCompleted=true&showHidden=true&maxResults=100`
-        );
-        const tareas = resT.items || [];
-        for (const t of tareas) {
-          if (normalizar(t.title).includes(query)) {
-            if (t.status !== 'completed') {
-              return { tarea: t, listaId: lista.id, listaNombre: lista.title };
-            }
-            if (!respaldoCompletada) {
-              respaldoCompletada = { tarea: t, listaId: lista.id, listaNombre: lista.title };
-            }
-          }
-        }
-      }
-      return respaldoCompletada;
+      const todas = cargas.flat();
+      const pendiente = todas.find(x => normalizar(x.tarea.title).includes(query) && x.tarea.status !== 'completed');
+      if (pendiente) return pendiente;
+      return todas.find(x => normalizar(x.tarea.title).includes(query)) || null;
     }
 
     async function buscarEventoEnTodos(nombreBuscado) {
@@ -865,13 +863,18 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
     }
 
     if (accion === 'leer_tareas') {
+      const hace48h = Date.now() - 48 * 3600 * 1000;
       const resumenPorCajon = {};
       await Promise.all(
         todasLasListas.map(async (lista) => {
           const resT = await gFetch(
-            `${TASKS_BASE}/lists/${encodeURIComponent(lista.id)}/tasks?showCompleted=true&showHidden=true&maxResults=100`
+            `${TASKS_BASE}/lists/${encodeURIComponent(lista.id)}/tasks?showCompleted=true&showHidden=false&maxResults=100`
           );
-          const tareasLista = (resT.items || []).filter(t => t.title && t.title.trim());
+          const tareasLista = (resT.items || []).filter(t => {
+            if (!t.title || !t.title.trim()) return false;
+            if (t.status !== 'completed') return true;
+            return t.completed ? new Date(t.completed).getTime() >= hace48h : false;
+          });
           resumenPorCajon[lista.title] = tareasLista.map(t => {
             const estado = t.status === 'completed' ? '[HECHA]' : '[PENDIENTE]';
             const esSubtarea = t.parent ? '  ↳ (Subtarea) ' : '';
