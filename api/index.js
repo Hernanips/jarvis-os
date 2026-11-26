@@ -63,8 +63,10 @@ async function llamarGeminiConReintento(params, cadenaModelos = MODELOS_RAPIDOS)
           break;
         }
 
-        // Si un modelo tarda >15s, saltamos directo al siguiente (ej: de 3.6-flash a 3.5-flash)
-        if (esTimeout) break;
+        if (esTimeout) {
+          modelosEnPausa.set(modelo, Date.now() + 10 * 60 * 1000);
+          break;
+        }
 
         if (esTemporal && intento < 2) {
           await new Promise(resolve => setTimeout(resolve, 1000));
@@ -436,7 +438,7 @@ export default async function handler(req, res) {
           2) Marca como completadas las tareas/subtareas realmente terminadas al 100% (incluidas otras asignaturas que mencione, como Color).
           3) Recalcula los totales EXACTOS que quedan pendientes restando lo ya hecho (y anotando lo que está a medias/encajado).
           4) Actualiza el bloque de memoria con el nuevo inventario restante y regenera/ajusta las tareas pendientes en Google Tasks para que el plan refleje siempre lo que falta de verdad.
-        - SUBTAREAS OBLIGATORIAS EN TAREAS COMPUESTAS: Cuando crees tareas diarias que combinen 2 o más bloques/elementos distintos (ej. entrenamiento + anatomía, o varios apartados de un trabajo), crea una tarea padre clara para el día y pasa el desglose en el array 'subtasks' de 'crear_tareas_lote' o 'crear_tarea' (ej. subtasks: ["1 ejercicio de práctica", "2 páginas de anatomía"]).
+        - SUBTAREAS OBLIGATORIAS EN TAREAS COMPUESTAS: Cuando crees tareas diarias que combinen 2 o más bloques/elementos distintos (ej. entrenamiento + anatomía, o varios apartados de un trabajo), crea una tarea padre clara para el día y pasa el desglose en el array 'subtasks' de 'crear_tareas_lote' o 'crear_tarea' (ej. subtasks: ["1 ejercicio de práctica", "2 páginas de anatomía"]). Si un día solo tiene 1 único bloque/tema, pon directamente el contenido claro en el título (ej: "Sketchbook: 3 páginas de anatomía") y NO uses 'subtasks' ni nombres genéricos como "Bloque 1".
 
         MEMORIA VIVA POR BLOQUES (ESTILO CLAUDE):
         - Al llamar a 'actualizar_bloque_memoria', pasa siempre topic (slug), kind ("tema" para categorías continuas o "area" para metas/proyectos concretos), title, summary (1 frase) y details (array completo consolidado con fechas absolutas, borrando planes pasados irrelevantes según hoy ${fechaLegible}).
