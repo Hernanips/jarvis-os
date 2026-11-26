@@ -3,17 +3,24 @@ import { assistantTools } from '../src/tools/declarations.js';
 import { ejecutarHerramienta } from '../src/services/executor.js';
 import { intercambiarCodigoStrava } from '../src/services/stravaApi.js';
 
-// Orden de preferencia (cada modelo tiene su propia cuota diaria en Free Tier)
+// Cada modelo tiene su propio cupo diario independiente (5 x 20 RPD = 100 RPD potentes/día)
 const MODELOS_POTENTES = [
+  'gemini-3.8-flash',
+  'gemini-4-hydrogen',
   'gemini-3.6-flash',
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite'
+  'gemini-3-flash',
+  'gemini-2.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite'
 ];
 
+// Más de 1.000 RPD/día para transcripciones, memoria rápida y consultas ligeras
 const MODELOS_RAPIDOS = [
   'gemini-3.5-flash-lite',
-  'gemini-3.5-flash',
-  'gemini-3.6-flash'
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-3.8-flash',
+  'gemini-2.5-flash'
 ];
 
 // Detecta si la petición requiere razonamiento complejo (planificar, analizar Strava, lotes grandes)
