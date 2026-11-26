@@ -4,6 +4,7 @@ import { initShortcuts, renderizarBarraAtajos } from './shortcuts.js';
 import { initMemory } from './memory.js';
 import { initChat, ajustarAlturaInput, enviarRapido } from './chat.js';
 import { initAuth } from './auth.js';
+import { initTTS } from './tts.js';
 
 if ('caches' in window) {
   caches.keys().then((keys) => {
@@ -19,6 +20,7 @@ initShortcuts({ onSelectPrompt: enviarRapido });
 initMemory();
 initChat();
 initAuth({ onAuthReady: renderizarBarraAtajos });
+initTTS();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

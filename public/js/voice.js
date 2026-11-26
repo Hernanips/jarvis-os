@@ -1,5 +1,6 @@
 import { state, vibrar, agregarMensajeChat } from './state.js';
 import { obtenerSesionActiva } from './auth.js';
+import { detenerVoz } from './tts.js';
 
 const NUM_WAVE_BARS = 48;
 const waveBarElements = [];
@@ -51,6 +52,8 @@ function blobABase64(blob) {
 }
 
 async function iniciarGrabacion() {
+  detenerVoz();
+
   if (state.isGenerating || isRecording) return;
   vibrar(16);
 

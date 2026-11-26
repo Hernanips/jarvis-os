@@ -8,6 +8,7 @@ import {
 import { cargarConfigYAuth, obtenerSesionActiva } from './auth.js';
 import { estaGrabando, finalizarAudioYTranscribir } from './voice.js';
 import { abrirModalMemorias } from './memory.js';
+import { leerSiActivo, hablarTexto, detenerVoz } from './tts.js';
 
 export function ajustarAlturaInput() {
   const userInput = document.getElementById('userInput');
@@ -141,6 +142,21 @@ export function enviarRapido(texto) {
   enviarMensaje();
 }
 
+function adjuntarBotonVozMensaje(msgEl, textoCrudo) {
+  if (!msgEl || !('speechSynthesis' in window)) return null;
+  const bar = document.createElement('div');
+  bar.className = 'msg-tts-bar';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'msg-tts-btn';
+  btn.title = 'Escuchar mensaje';
+  btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>';
+  btn.addEventListener('click', () => hablarTexto(textoCrudo, btn));
+  bar.appendChild(btn);
+  msgEl.appendChild(bar);
+  return btn;
+}
+
 export async function enviarMensaje() {
   if (state.isGenerating) return;
 
@@ -157,6 +173,7 @@ export async function enviarMensaje() {
   if (!text) return;
 
   vibrar(14);
+  detenerVoz();
   userInput.value = '';
   ajustarAlturaInput();
 
@@ -171,7 +188,9 @@ export async function enviarMensaje() {
   }
 
   setEstadoGenerando(true);
-  agregarMensajeChat(escapeHtml(text).replace(/\n/g, '<br>'), { tipo: 'user' });
+  const msgEl = agregarMensajeChat(formatearTexto(reply) + recibosHtml);
+  const btnVoz = adjuntarBotonVozMensaje(msgEl, reply);
+  leerSiActivo(reply, btnVoz);
 
   const loadingId = 'loading-' + Date.now();
   const loadingDiv = document.createElement('div');

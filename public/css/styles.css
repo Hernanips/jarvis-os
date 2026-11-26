@@ -1196,3 +1196,42 @@ header {
     border-top: 1px dashed var(--border);
     margin: 12px 0;
 }
+
+/* BOTÓN TTS EN HEADER Y MINI BOTÓN DISCRETO EN BURBUJA */
+.icon-top-btn.tts-active {
+    border-color: var(--nothing-red);
+    color: var(--text-strong);
+}
+
+.msg-tts-bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 4px;
+    margin-bottom: -6px;
+}
+
+.msg-tts-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    opacity: 0.45;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.msg-tts-btn:hover {
+    opacity: 1;
+    color: var(--text-strong);
+    background: var(--bg-hover);
+}
+
+.msg-tts-btn.speaking {
+    opacity: 1;
+    color: var(--nothing-red);
+}

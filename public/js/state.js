@@ -62,4 +62,6 @@ export function agregarMensajeChat(html, { tipo = 'assistant', esError = false }
   div.innerHTML = html;
   chatBox.appendChild(div);
   chatBox.scrollTop = chatBox.scrollHeight;
+  
+  return div;
 }
