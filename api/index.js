@@ -3,24 +3,18 @@ import { assistantTools } from '../src/tools/declarations.js';
 import { ejecutarHerramienta } from '../src/services/executor.js';
 import { intercambiarCodigoStrava } from '../src/services/stravaApi.js';
 
-// Cada modelo tiene su propio cupo diario independiente (5 x 20 RPD = 100 RPD potentes/día)
 const MODELOS_POTENTES = [
   'gemini-3.8-flash',
   'gemini-4-hydrogen',
   'gemini-3.6-flash',
-  'gemini-3-flash',
-  'gemini-2.5-flash',
   'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite'
 ];
 
-// Más de 1.000 RPD/día para transcripciones, memoria rápida y consultas ligeras
 const MODELOS_RAPIDOS = [
   'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
-  'gemini-2.5-flash-lite',
-  'gemini-3.8-flash',
-  'gemini-2.5-flash'
+  'gemini-3.8-flash'
 ];
 
 // Detecta si la petición requiere razonamiento complejo (planificar, analizar Strava, lotes grandes)
@@ -46,44 +40,40 @@ async function llamarGeminiConReintento(params, cadenaModelos = MODELOS_RAPIDOS)
       continue;
     }
 
-    for (let intento = 1; intento <= 2; intento++) {
-      const t0 = Date.now();
-      try {
-        const res = await conTimeout(
-          ai.models.generateContent({ ...params, model: modelo }),
-          15000
-        );
-        console.log(`⚡ [${modelo}] OK en ${Date.now() - t0}ms`);
-        return res;
-      } catch (err) {
-        ultimoError = err;
-        const msg = String(err?.message || err || '');
-        console.warn(`⚠️ [${modelo}] fallo en ${Date.now() - t0}ms: ${msg.slice(0, 120)}`);
+    const t0 = Date.now();
+    const timeoutMs = /lite/i.test(modelo) ? 12000 : 18000;
 
-        const esCuotaDiaria = /per day|free_tier_requests|daily/i.test(msg);
-        const esNoEncontrado = /404|not found/i.test(msg);
-        const esTimeout = /TIMEOUT_/i.test(msg);
-        const esTemporal = !esCuotaDiaria && /503|429|overloaded|unavailable|resource exhausted|high demand|muy solicitado/i.test(msg);
+    try {
+      const res = await conTimeout(
+        ai.models.generateContent({ ...params, model: modelo }),
+        timeoutMs
+      );
+      console.log(`⚡ [${modelo}] OK en ${Date.now() - t0}ms`);
+      return res;
+    } catch (err) {
+      ultimoError = err;
+      const msg = String(err?.message || err || '');
+      console.warn(`⚠️ [${modelo}] fallo en ${Date.now() - t0}ms: ${msg.slice(0, 120)}`);
 
-        if (esCuotaDiaria || esNoEncontrado) {
-          modelosEnPausa.set(modelo, Date.now() + 15 * 60 * 1000);
-          break;
-        }
+      const esCuotaDiaria = /per day|free_tier_requests|daily/i.test(msg);
+      const esNoEncontrado = /404|not found/i.test(msg);
+      const esTimeout = /TIMEOUT_/i.test(msg);
+      const esTemporal = !esCuotaDiaria && /503|429|overloaded|unavailable|resource exhausted|high demand|muy solicitado/i.test(msg);
 
-        if (esTimeout) {
-          modelosEnPausa.set(modelo, Date.now() + 10 * 60 * 1000);
-          break;
-        }
-
-        if (esTemporal && intento < 2) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          continue;
-        }
-
-        if (esTemporal) break;
-
-        throw err;
+      if (esCuotaDiaria || esNoEncontrado) {
+        modelosEnPausa.set(modelo, Date.now() + 15 * 60 * 1000);
+        continue;
       }
+
+      if (esTimeout) {
+        modelosEnPausa.set(modelo, Date.now() + 10 * 60 * 1000);
+        continue;
+      }
+
+      // En picos 503 saltamos directamente al siguiente modelo en vez de esperar
+      if (esTemporal) continue;
+
+      throw err;
     }
   }
 
@@ -357,7 +347,7 @@ export default async function handler(req, res) {
       }
 
       // 4. Cargamos en PARALELO la Memoria Viva y el contexto reciente invisible (últimas 14 horas)
-      const hace14Horas = new Date(Date.now() - 14 * 3600 * 1000).toISOString();
+      const hace3Horas = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
 
       const [memRes, ctxRes] = await Promise.all([
         supabase
@@ -370,9 +360,9 @@ export default async function handler(req, res) {
           .from('chat_messages')
           .select('role, content')
           .eq('user_id', userId)
-          .gte('created_at', hace14Horas)
+          .gte('created_at', hace3Horas)
           .order('created_at', { ascending: false })
-          .limit(10)
+          .limit(6)
       ]);
 
       const memoriasUsuario = memRes.data || [];
@@ -427,7 +417,7 @@ export default async function handler(req, res) {
            -> Si es un proyecto o entrega grande, actualiza también el bloque de memoria correspondiente para no perder el hilo en días posteriores.
         3. DATO PERSONAL SIN FECHA (ej: "me he comprado unas zapatillas nuevas", "me duele la rodilla", preferencias):
            -> Solo actualiza la memoria viva con 'actualizar_bloque_memoria'. NO crees tareas ni eventos innecesarios.
-        4. CONTINUIDAD: Tienes el historial de las últimas horas arriba. Si el usuario vuelve más tarde diciendo "he acabado esto, lo otro no me dio tiempo", retoma el plan inmediatamente y mueve las tareas pendientes en Google Tasks.
+        4. CONTINUIDAD: Tienes el historial de las últimas horas arriba. Si el usuario vuelve más tarde diciendo "he acabado esto, lo otro no me dio tiempo", retoma el plan inmediatamente y mueve las tareas pendientes en Google Tasks. Atiende SIEMPRE y ÚNICAMENTE a la petición del ÚLTIMO mensaje del usuario; usa el historial previo solo como contexto y jamás re-ejecutes correcciones o tareas de turnos anteriores que no haya vuelto a pedir ahora.
         5. VERIFICACIÓN ESTRICTA: Nunca confirmes al usuario que has creado o movido tareas si la herramienta devolvió 'ok: false' o un número distinto de tareas al que planeas mencionar. Si una herramienta devuelve error de formato o lista no encontrada, corrige los argumentos y vuelve a llamarla antes de contestar.
         6. FIDELIDAD LITERAL CON LOS RESULTADOS: Cuando expliques al usuario las tareas o eventos que acabas de crear o mover, copia LITERALMENTE los títulos y fechas que devolvió la herramienta en su JSON ('tareas_creadas', 'tareas_reorganizadas'). Jamás recalcules ni redactes un reparto distinto al que realmente se guardó.
         7. REPARTO EQUILIBRADO EN TODO EL RANGO: Si el usuario pide repartir un volumen de trabajo "desde hoy hasta el día X", distribuye la carga de forma uniforme a lo largo de TODOS los días disponibles de ese rango (empezando hoy mismo si lo pide), en lugar de amontonar todo en la primera semana dejando muchos días vacíos al final.
@@ -562,11 +552,14 @@ export default async function handler(req, res) {
         : 'Hecho.');
 
       // Guardamos el turno en chat_messages para mantener la continuidad invisible entre sesiones y dispositivos
+      const ahoraUser = new Date();
+      const ahoraModel = new Date(ahoraUser.getTime() + 1000);
+
       await supabase
         .from('chat_messages')
         .insert([
-          { user_id: userId, role: 'user', content: message },
-          { user_id: userId, role: 'model', content: replyText }
+          { user_id: userId, role: 'user', content: message, created_at: ahoraUser.toISOString() },
+          { user_id: userId, role: 'model', content: replyText, created_at: ahoraModel.toISOString() }
         ]);
 
       return res.status(200).json({
