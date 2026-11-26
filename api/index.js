@@ -71,7 +71,10 @@ async function llamarGeminiConReintento(params, cadenaModelos = MODELOS_RAPIDOS)
       }
 
       // En picos 503 saltamos directamente al siguiente modelo en vez de esperar
-      if (esTemporal) continue;
+      if (esTemporal) {
+        modelosEnPausa.set(modelo, Date.now() + 2 * 60 * 1000);
+        continue;
+      }
 
       throw err;
     }
