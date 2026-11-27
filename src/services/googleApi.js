@@ -480,7 +480,7 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
       return { ok: true, _newGoogleAccessToken: tokenRenovadoEnEstaLlamada, mensaje: 'Tareas completadas limpiadas' };
     }
 
-    async function crearSubtareasEnOrden(listaId, parentId, subtasksRaw) {
+    async function crearSubtareasEnOrden(listaId, parentId, subtasksRaw, dueIso = null) {
       if (!Array.isArray(subtasksRaw) || subtasksRaw.length === 0) return [];
       const limpias = subtasksRaw
         .map(s => (typeof s === 'string' ? s : (s?.title || s?.titulo || '')).trim())
@@ -491,9 +491,12 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
       for (const tituloSub of limpias) {
         const params = new URLSearchParams({ parent: parentId });
         if (prevId) params.set('previous', prevId);
+        const subBody = { title: tituloSub };
+        if (dueIso) subBody.due = dueIso;
+
         const sub = await gFetch(
-          `${TASKS_BASE}/lists/${encodeURIComponent(listaId)}/tasks?${params.toString()}`,
-          { method: 'POST', body: JSON.stringify({ title: tituloSub }) }
+          TASKS_BASE + '/lists/' + encodeURIComponent(listaId) + '/tasks?' + params.toString(),
+          { method: 'POST', body: JSON.stringify(subBody) }
         );
         prevId = sub.id;
         creadas.push(sub.title);
@@ -545,7 +548,7 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
         { method: 'POST', body: JSON.stringify(body) }
       );
       const subtareasCreadas = (!parentId && Array.isArray(args.subtasks))
-      ? await crearSubtareasEnOrden(listaDestino.id, creada.id, args.subtasks)
+      ? await crearSubtareasEnOrden(listaDestino.id, creada.id, args.subtasks, body.due || null)
       : [];
 
       return {
@@ -620,7 +623,7 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
               { method: 'POST', body: JSON.stringify(body) }
             );
 
-            const subtareasCreadas = await crearSubtareasEnOrden(t.listaDestino.id, creada.id, t.subtasks);
+            const subtareasCreadas = await crearSubtareasEnOrden(t.listaDestino.id, creada.id, t.subtasks, body.due || null);
             return {
               ok: true,
               tarea: creada.title,
