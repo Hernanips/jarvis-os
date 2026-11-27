@@ -697,39 +697,62 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
     if (accion === 'reorganizar_tareas_lote') {
       const listaCambios = Array.isArray(args.cambios) ? args.cambios : [];
 
-      // 1. Descargamos todas las tareas de todas las listas UNA sola vez en paralelo
       const cargasListas = await Promise.all(
         todasLasListas.map(async (lista) => {
           const resT = await gFetch(
-            `${TASKS_BASE}/lists/${encodeURIComponent(lista.id)}/tasks?showCompleted=false&maxResults=100`
+            TASKS_BASE + '/lists/' + encodeURIComponent(lista.id) + '/tasks?showCompleted=false&maxResults=100'
           );
           return (resT.items || []).map(t => ({
             tarea: t,
             listaId: lista.id,
             listaNombre: lista.title,
-            norm: normalizar(t.title)
+            norm: normalizar(t.title),
+            fecha: t.due ? t.due.substring(0, 10) : null
           }));
         })
       );
       const catalogo = cargasListas.flat();
 
-      // 2. Aplicamos todos los cambios de fecha en paralelo
+      // Emparejamos de forma secuencial para no pisar nunca la misma tarea dos veces
+      const usados = new Set();
+      const operaciones = listaCambios.map((item) => {
+        const q = normalizar(item.search_title);
+        const fActual = item.current_due_date ? String(item.current_due_date).substring(0, 10) : null;
+        const disponibles = catalogo.filter(c => !usados.has(c.tarea.id));
+
+        let match = null;
+        if (fActual) {
+          match = disponibles.find(c => c.norm === q && c.fecha === fActual) ||
+                  disponibles.find(c => (c.norm.includes(q) || q.includes(c.norm)) && c.fecha === fActual);
+        }
+        if (!match) {
+          match = disponibles.find(c => c.norm === q) ||
+                  disponibles.find(c => c.norm.includes(q) || (c.norm.length >= 4 && q.includes(c.norm))) ||
+                  null;
+        }
+
+        if (match) usados.add(match.tarea.id);
+        return { item, match };
+      });
+
       const resultados = await Promise.all(
-        listaCambios.map(async (item) => {
+        operaciones.map(async ({ item, match }) => {
           try {
-            const q = normalizar(item.search_title);
-            const match = catalogo.find(c => c.norm.includes(q) || q.includes(c.norm));
             if (!match) {
-              return { tarea: item.search_title, ok: false, error: 'No encontrada' };
+              return { tarea: item.search_title, ok: false, error: 'No encontrada (o ya reasignada en este lote)' };
             }
 
-            const nuevaFecha = `${item.due_date.substring(0, 10)}T09:00:00.000Z`;
+            const tituloFinal = (item.new_title && String(item.new_title).trim())
+              ? String(item.new_title).trim()
+              : match.tarea.title;
+            const nuevaFecha = String(item.due_date).substring(0, 10) + 'T09:00:00.000Z';
+
             await gFetch(
-              `${TASKS_BASE}/lists/${encodeURIComponent(match.listaId)}/tasks/${encodeURIComponent(match.tarea.id)}`,
+              TASKS_BASE + '/lists/' + encodeURIComponent(match.listaId) + '/tasks/' + encodeURIComponent(match.tarea.id),
               {
                 method: 'PATCH',
                 body: JSON.stringify({
-                  title: match.tarea.title,
+                  title: tituloFinal,
                   notes: match.tarea.notes || '',
                   status: match.tarea.status || 'needsAction',
                   due: nuevaFecha
@@ -739,9 +762,10 @@ export async function ejecutarAccionGoogle(accion, args, googleTokenInicial, use
 
             return {
               ok: true,
-              tarea: match.tarea.title,
+              tarea: tituloFinal,
               lista: match.listaNombre,
-              nueva_fecha: item.due_date.substring(0, 10)
+              fecha_anterior: match.fecha,
+              nueva_fecha: String(item.due_date).substring(0, 10)
             };
           } catch (e) {
             return { tarea: item.search_title, ok: false, error: e.message };

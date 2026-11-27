@@ -184,7 +184,7 @@ export const assistantTools = [
       },
       {
         name: 'reorganizar_tareas_lote',
-        description: 'Cambia la fecha de vencimiento (due_date) de MÚLTIPLES tareas existentes a la vez en una sola llamada paralela. Úsala SIEMPRE que el usuario pida reorganizar, mover, extender o repartir varias tareas pendientes entre distintos días.',
+        description: 'Cambia la fecha (y opcionalmente el título) de MÚLTIPLES tareas existentes a la vez en paralelo. Si varias tareas comparten el mismo título en días distintos, pasa siempre current_due_date para distinguirlas.',
         parameters: {
           type: Type.OBJECT,
           properties: {
@@ -195,7 +195,9 @@ export const assistantTools = [
                 type: Type.OBJECT,
                 properties: {
                   search_title: { type: Type.STRING, description: 'Título actual de la tarea a mover' },
-                  due_date: { type: Type.STRING, description: 'Nueva fecha en formato YYYY-MM-DD' }
+                  current_due_date: { type: Type.STRING, description: 'Fecha actual YYYY-MM-DD de la tarea (muy recomendable si hay títulos repetidos)' },
+                  due_date: { type: Type.STRING, description: 'Nueva fecha en formato YYYY-MM-DD' },
+                  new_title: { type: Type.STRING, description: 'Opcional: nuevo título si también cambia la cantidad o contenido' }
                 },
                 required: ['search_title', 'due_date']
               }
